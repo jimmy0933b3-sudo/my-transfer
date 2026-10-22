@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.cameratranslator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
@@ -65,6 +65,7 @@ dependencies {
     implementation("androidx.camera:camera-video:$camerax_version")
     implementation("androidx.camera:camera-view:$camerax_version")
     implementation("androidx.camera:camera-extensions:$camerax_version")
+    implementation("androidx.camera:camera-mlkit-vision:1.3.0-beta02")
 
     // ML Kit Text Recognition
     implementation("com.google.mlkit:text-recognition:16.0.0")

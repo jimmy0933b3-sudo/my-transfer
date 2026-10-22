@@ -1,116 +1,115 @@
 package com.example.cameratranslator.camera
 
-import android.content.Context
 import android.util.Log
-import android.view.ScaleGestureDetector
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.UseCaseGroup
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.mlkit.vision.MlKitAnalyzer
+import androidx.camera.view.CameraController
+import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.example.cameratranslator.core.MainViewModel
+import com.example.cameratranslator.core.models.TextElement
+import com.google.mlkit.vision.text.Text
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlin.math.max
+import kotlin.math.min
 
 @Composable
 fun CameraPreviewScreen(viewModel: MainViewModel) {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
+    val owner = LocalLifecycleOwner.current
+    val executor = remember(context) { ContextCompat.getMainExecutor(context) }
+    val controller = remember(context) {
+        LifecycleCameraController(context).apply {
+            imageAnalysisBackpressureStrategy = ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
+        }
+    }
+    val preview = remember(context) {
+        PreviewView(context).apply {
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+            this.controller = controller
+        }
+    }
+    val latin = remember { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
+    val japanese = remember { TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build()) }
 
-    val previewView = remember { PreviewView(context) }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { offset ->
-                        val factory = previewView.meteringPointFactory
-                        val point = factory.createPoint(offset.x, offset.y)
-                        val action = FocusMeteringAction.Builder(point).build()
-                        try {
-                            val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-                            val cameraProvider = cameraProviderFuture.get()
-                            // Just tapping logic is handled inside preview touch listener
-                        } catch (e: Exception) {
-                            Log.e("CameraPreview", "Focus failed", e)
-                        }
-                    }
-                )
+    DisposableEffect(controller, owner, viewModel) {
+        viewModel.cameraController = controller
+        controller.setImageAnalysisAnalyzer(
+            executor,
+            MlKitAnalyzer(
+                listOf(latin, japanese),
+                CameraController.COORDINATE_SYSTEM_VIEW_REFERENCED,
+                executor
+            ) { result ->
+                if (!viewModel.isPaused) {
+                    result.getThrowable(latin)?.let { Log.w("CameraTranslator", "Latin OCR error", it) }
+                    result.getThrowable(japanese)?.let { Log.w("CameraTranslator", "Japanese OCR error", it) }
+                    val en = result.getValue(latin)?.let { extractLines(it, "en", false) }.orEmpty()
+                    val ja = result.getValue(japanese)?.let { extractLines(it, "ja", true) }.orEmpty()
+                    viewModel.onCameraTextElements(mergeLines(en, ja))
+                }
             }
-    ) {
-        AndroidView(
-            factory = {
-                val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-                cameraProviderFuture.addListener({
-                    val cameraProvider = cameraProviderFuture.get()
-                    val preview = Preview.Builder().build().also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
-                    }
+        )
+        try {
+            controller.bindToLifecycle(owner)
+        } catch (e: Exception) {
+            Log.e("CameraTranslator", "Unable to bind camera", e)
+            viewModel.showCameraError()
+        }
+        onDispose {
+            controller.clearImageAnalysisAnalyzer()
+            controller.unbind()
+            if (viewModel.cameraController === controller) viewModel.cameraController = null
+            latin.close()
+            japanese.close()
+        }
+    }
+    AndroidView(factory = { preview }, modifier = Modifier.fillMaxSize())
+}
 
-                    val imageAnalyzer = ImageAnalysis.Builder()
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .build()
-                        .also {
-                            it.setAnalyzer(ContextCompat.getMainExecutor(context)) { imageProxy ->
-                                viewModel.processImage(imageProxy)
-                            }
-                        }
+private val japaneseCharacters = Regex("[\u3040-\u30ff\u3400-\u9fff]")
 
-                    try {
-                        cameraProvider.unbindAll()
-                        // Share a ViewPort so ImageAnalysis cropRect matches visible PreviewView.
-                        val group = UseCaseGroup.Builder()
-                            .addUseCase(preview)
-                            .addUseCase(imageAnalyzer)
-                        previewView.viewPort?.let { group.setViewPort(it) }
-                        val camera = cameraProvider.bindToLifecycle(
-                            lifecycleOwner,
-                            CameraSelector.DEFAULT_BACK_CAMERA,
-                            group.build()
-                        )
-
-                        viewModel.cameraControl = camera.cameraControl
-
-                        // Setup zoom and tap to focus via PreviewView
-                        val listener = object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-                            override fun onScale(detector: ScaleGestureDetector): Boolean {
-                                val currentZoomRatio = camera.cameraInfo.zoomState.value?.zoomRatio ?: 1f
-                                val delta = detector.scaleFactor
-                                camera.cameraControl.setZoomRatio(currentZoomRatio * delta)
-                                return true
-                            }
-                        }
-                        val scaleGestureDetector = ScaleGestureDetector(context, listener)
-                        previewView.setOnTouchListener { _, event ->
-                            scaleGestureDetector.onTouchEvent(event)
-                            if (event.action == android.view.MotionEvent.ACTION_DOWN) {
-                                val factory = previewView.meteringPointFactory
-                                val point = factory.createPoint(event.x, event.y)
-                                val action = FocusMeteringAction.Builder(point).build()
-                                camera.cameraControl.startFocusAndMetering(action)
-                            }
-                            true
-                        }
-
-                    } catch (exc: Exception) {
-                        // Handle errors
-                    }
-                }, ContextCompat.getMainExecutor(context))
-                previewView
-            },
-            modifier = Modifier.fillMaxSize()
+private fun extractLines(result: Text, fallbackLanguage: String, japaneseOnly: Boolean): List<TextElement> =
+    result.textBlocks.flatMap { it.lines }.mapNotNull { line ->
+        val value = line.text.trim()
+        val box = line.boundingBox ?: return@mapNotNull null
+        if (box.isEmpty || value.length < 2 || value.none { it.isLetter() }) return@mapNotNull null
+        if (japaneseOnly && !japaneseCharacters.containsMatchIn(value)) return@mapNotNull null
+        val language = if (japaneseCharacters.containsMatchIn(value)) "ja" else fallbackLanguage
+        TextElement(
+            id = language + ":" + value.lowercase(),
+            originalText = value,
+            boundingBox = box,
+            sourceLanguage = language,
+            isViewCoordinates = true
         )
     }
+
+private fun mergeLines(latin: List<TextElement>, japanese: List<TextElement>): List<TextElement> {
+    val output = latin.toMutableList()
+    for (candidate in japanese) {
+        val box = candidate.boundingBox ?: continue
+        val overlapIndex = output.indexOfFirst { existing ->
+            val old = existing.boundingBox ?: return@indexOfFirst false
+            val w = max(0, min(box.right, old.right) - max(box.left, old.left))
+            val h = max(0, min(box.bottom, old.bottom) - max(box.top, old.top))
+            val smallerArea = min(box.width() * box.height(), old.width() * old.height())
+            smallerArea > 0 && w.toFloat() * h / smallerArea > 0.55f
+        }
+        if (overlapIndex == -1) output.add(candidate)
+        else if (candidate.sourceLanguage == "ja") output[overlapIndex] = candidate
+    }
+    return output.sortedWith(compareBy({ it.boundingBox?.top ?: Int.MAX_VALUE }, { it.boundingBox?.left ?: 0 })).take(32)
 }

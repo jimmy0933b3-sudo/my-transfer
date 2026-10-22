@@ -2,8 +2,9 @@ package com.example.cameratranslator.core
 
 import android.app.Application
 import android.graphics.Bitmap
-import androidx.camera.core.CameraControl
-import androidx.camera.core.ImageProxy
+import android.os.SystemClock
+import android.util.Log
+import androidx.camera.view.LifecycleCameraController
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.setValue
@@ -13,17 +14,14 @@ import com.example.cameratranslator.core.models.TextElement
 import com.example.cameratranslator.history.HistoryDao
 import com.example.cameratranslator.history.TranslationHistory
 import com.example.cameratranslator.ocr.MLKitOcrProvider
-import com.example.cameratranslator.ocr.OcrProvider
 import com.example.cameratranslator.translation.MLKitTranslationProvider
-import com.example.cameratranslator.translation.TranslationProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 @HiltViewModel
@@ -31,21 +29,23 @@ class MainViewModel @Inject constructor(
     application: Application,
     private val historyDao: HistoryDao
 ) : AndroidViewModel(application) {
-    private val ocrProvider: OcrProvider = MLKitOcrProvider()
-    private val translationProvider: TranslationProvider = MLKitTranslationProvider()
+    private val photoOcr = MLKitOcrProvider()
+    private val translator = MLKitTranslationProvider()
 
     private val _textElements = MutableStateFlow<List<TextElement>>(emptyList())
     val textElements: StateFlow<List<TextElement>> = _textElements.asStateFlow()
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
 
-    private val translationCache = ConcurrentHashMap<String, String>()
-    private val processing = AtomicBoolean(false)
-    private var lastSuccessfulRecognition = 0L
+    private data class Tracked(val element: TextElement, val lastSeenMs: Long)
+    private val tracked = linkedMapOf<String, Tracked>()
+    private val cache = mutableMapOf<String, String>()
+    private val pending = mutableSetOf<String>()
+    private val retryAfter = mutableMapOf<String, Long>()
     private val preferences = application.getSharedPreferences("translator_settings", 0)
+
     var overlayOpacity by mutableFloatStateOf(preferences.getFloat("overlay_opacity", 0.88f))
         private set
-
     fun saveOverlayOpacity(value: Float) {
         overlayOpacity = value.coerceIn(0.35f, 1f)
         preferences.edit().putFloat("overlay_opacity", overlayOpacity).apply()
@@ -53,69 +53,90 @@ class MainViewModel @Inject constructor(
 
     @Volatile var isPaused = false
     var showOriginal = false
-    var cameraControl: CameraControl? = null
+    var cameraController: LifecycleCameraController? = null
     var isFlashlightOn = false
-
     fun toggleFlashlight() {
         isFlashlightOn = !isFlashlightOn
-        cameraControl?.enableTorch(isFlashlightOn)
+        cameraController?.enableTorch(isFlashlightOn)
     }
 
-    fun processImage(imageProxy: ImageProxy) {
-        if (isPaused || !processing.compareAndSet(false, true)) {
-            imageProxy.close()
-            return
-        }
-        viewModelScope.launch(Dispatchers.Default) {
-            try {
-                val detected = ocrProvider.recognizeText(imageProxy, imageProxy.imageInfo.rotationDegrees)
-                translateAndPublish(detected)
-            } catch (_: Exception) {
-                _statusMessage.value = "辨識失敗，請重新對焦"
-            } finally {
-                imageProxy.close()
-                processing.set(false)
+    fun showCameraError() {
+        _statusMessage.value = "相機無法啟動，請檢查權限"
+    }
+
+    private fun key(e: TextElement): String =
+        e.sourceLanguage + ":" + e.originalText.trim().replace(Regex("\\s+"), " ").lowercase()
+
+    /** Called by CameraX on main executor. OCR must never wait for model downloads. */
+    fun onCameraTextElements(elements: List<TextElement>) {
+        if (!isPaused) publishDetections(elements)
+    }
+
+    private fun publishDetections(detected: List<TextElement>) {
+        val now = SystemClock.elapsedRealtime()
+        detected.forEach { element ->
+            val id = key(element)
+            val previous = tracked[id]?.element?.translatedText
+            val cached = cache[id] ?: previous
+            tracked[id] = Tracked(element.copy(translatedText = cached), now)
+
+            if (cached.isNullOrBlank() && id !in pending && now >= (retryAfter[id] ?: 0L)) {
+                pending.add(id)
+                _statusMessage.value = "首次翻譯正在準備離線語言模型…"
+                viewModelScope.launch(Dispatchers.IO) {
+                    val translation = try {
+                        translator.translate(element.originalText, element.sourceLanguage, "zh")
+                    } catch (e: Exception) {
+                        Log.w("CameraTranslator", "Translation failed", e)
+                        null
+                    }
+                    withContext(Dispatchers.Main) {
+                        pending.remove(id)
+                        if (!translation.isNullOrBlank() && translation != element.originalText) {
+                            cache[id] = translation
+                            tracked[id]?.let { trackedItem ->
+                                tracked[id] = trackedItem.copy(
+                                    element = trackedItem.element.copy(translatedText = translation)
+                                )
+                            }
+                            _statusMessage.value = null
+                        } else {
+                            retryAfter[id] = SystemClock.elapsedRealtime() + 12000L
+                            _statusMessage.value = "翻譯尚未完成，請確認網路與離線模型"
+                        }
+                        publish()
+                    }
+                }
             }
         }
+
+        // A momentary OCR miss must not cause translated boxes to flicker.
+        val seen = detected.map { key(it) }.toSet()
+        val iterator = tracked.iterator()
+        while (iterator.hasNext()) {
+            val (id, old) = iterator.next()
+            if (id !in seen && now - old.lastSeenMs > 2400L) iterator.remove()
+        }
+        if (detected.isEmpty() && tracked.isEmpty() && pending.isEmpty()) {
+            _statusMessage.value = "請對準英文或日文文字"
+        }
+        publish()
     }
 
-    private suspend fun translateAndPublish(detected: List<TextElement>) {
-        val now = android.os.SystemClock.elapsedRealtime()
-        if (detected.isEmpty()) {
-            if (now - lastSuccessfulRecognition > 1800L) _textElements.value = emptyList()
-            _statusMessage.value = "請對準清楚的英文或日文文字"
-            return
-        }
-        lastSuccessfulRecognition = now
-        _statusMessage.value = "正在辨識及準備離線翻譯模型…"
-        val current = _textElements.value
-        val translated = detected.map { element ->
-            val original = element.originalText
-            val key = element.sourceLanguage + ":" + original
-            val old = current.firstOrNull {
-                it.originalText == original && it.sourceLanguage == element.sourceLanguage
-            }?.translatedText
-            val value = translationCache[key] ?: old ?: translationProvider.translate(
-                original, element.sourceLanguage, "zh"
-            )
-            if (!value.isNullOrBlank()) translationCache[key] = value
-            element.copy(translatedText = value)
-        }
-        if (translated.any { it.translatedText != null }) {
-            _textElements.value = translated
-            _statusMessage.value = null
-        } else {
-            // Never render a tiny black box containing invisible/empty "translated" text.
-            _statusMessage.value = "尚未完成翻譯：請連線下載語言模型後再試"
-        }
+    private fun publish() {
+        _textElements.value = tracked.values.map { it.element }
     }
 
     fun processBitmap(bitmap: Bitmap) {
         viewModelScope.launch(Dispatchers.Default) {
             try {
-                val detected = ocrProvider.recognizeTextFromBitmap(bitmap)
-                translateAndPublish(detected)
-            } catch (_: Exception) {
+                val list = photoOcr.recognizeTextFromBitmap(bitmap)
+                withContext(Dispatchers.Main) {
+                    tracked.clear()
+                    publishDetections(list)
+                }
+            } catch (e: Exception) {
+                Log.w("CameraTranslator", "Photo OCR error", e)
                 _statusMessage.value = "圖片辨識失敗"
             }
         }
@@ -127,9 +148,14 @@ class MainViewModel @Inject constructor(
                 TranslationHistory(
                     sourceLanguage = element.sourceLanguage,
                     originalText = element.originalText,
-                    translatedText = element.translatedText ?: ""
+                    translatedText = element.translatedText.orEmpty()
                 )
             )
         }
+    }
+
+    override fun onCleared() {
+        translator.close()
+        super.onCleared()
     }
 }
