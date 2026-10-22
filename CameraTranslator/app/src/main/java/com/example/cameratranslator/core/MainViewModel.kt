@@ -31,6 +31,42 @@ class MainViewModel @Inject constructor(
 ) : AndroidViewModel(application) {
     private val photoOcr = MLKitOcrProvider()
     private val translator = MLKitTranslationProvider()
+    val modelStatuses = translator.modelStatuses
+    var wifiOnly by androidx.compose.runtime.mutableStateOf(
+        application.getSharedPreferences("translator_settings", 0)
+            .getBoolean("models_wifi_only", true)
+    )
+        private set
+
+    init {
+        refreshModelStatuses()
+    }
+
+    fun setWifiOnly(value: Boolean) {
+        wifiOnly = value
+        preferences.edit().putBoolean("models_wifi_only", value).apply()
+    }
+
+    fun refreshModelStatuses() {
+        viewModelScope.launch(Dispatchers.IO) {
+            translator.refreshModelStatuses()
+        }
+    }
+
+    fun downloadModel(language: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            translator.downloadLanguage(language, wifiOnly)
+        }
+    }
+
+    fun downloadAllModels() {
+        viewModelScope.launch(Dispatchers.IO) {
+            for (language in MLKitTranslationProvider.supportedLanguages) {
+                translator.downloadLanguage(language, wifiOnly)
+            }
+        }
+    }
+
 
     private val _textElements = MutableStateFlow<List<TextElement>>(emptyList())
     val textElements: StateFlow<List<TextElement>> = _textElements.asStateFlow()
@@ -80,9 +116,15 @@ class MainViewModel @Inject constructor(
             val cached = cache[id] ?: previous
             tracked[id] = Tracked(element.copy(translatedText = cached), now)
 
+            // Downloads are managed in Settings, never from live camera frames.
+            if (!translator.isReadyFor(element.sourceLanguage)) {
+                _statusMessage.value = "離線模型尚未就緒，請到設定下載語言模型"
+                return@forEach
+            }
+
             if (cached.isNullOrBlank() && id !in pending && now >= (retryAfter[id] ?: 0L)) {
                 pending.add(id)
-                _statusMessage.value = "首次翻譯正在準備離線語言模型…"
+                _statusMessage.value = null
                 viewModelScope.launch(Dispatchers.IO) {
                     val translation = try {
                         translator.translate(element.originalText, element.sourceLanguage, "zh")
@@ -102,7 +144,7 @@ class MainViewModel @Inject constructor(
                             _statusMessage.value = null
                         } else {
                             retryAfter[id] = SystemClock.elapsedRealtime() + 12000L
-                            _statusMessage.value = "翻譯尚未完成，請確認網路與離線模型"
+                            _statusMessage.value = "翻譯暫時失敗，請調整鏡頭或至設定檢查模型"
                         }
                         publish()
                     }
