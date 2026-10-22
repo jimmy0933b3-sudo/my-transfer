@@ -1,6 +1,7 @@
 package com.example.cameratranslator.translation
 
 import android.icu.text.Transliterator
+import android.os.Build
 import android.util.Log
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.nl.translate.TranslateLanguage
@@ -39,7 +40,7 @@ class MLKitTranslationProvider : TranslationProvider {
                 e
             }
             val output = entry.client.translate(text).await().takeIf { it.isNotBlank() } ?: return null
-            if (target == TranslateLanguage.CHINESE) {
+            if (target == TranslateLanguage.CHINESE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 try {
                     Transliterator.getInstance("Simplified-Traditional").transliterate(output)
                 } catch (e: Exception) {
