@@ -42,7 +42,7 @@ class MainViewModel @Inject constructor(
         refreshModelStatuses()
     }
 
-    fun setWifiOnly(value: Boolean) {
+    fun updateWifiOnly(value: Boolean) {
         wifiOnly = value
         preferences.edit().putBoolean("models_wifi_only", value).apply()
     }
