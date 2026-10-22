@@ -75,7 +75,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             }
             Switch(
                 checked = viewModel.wifiOnly,
-                onCheckedChange = viewModel::setWifiOnly
+                onCheckedChange = viewModel::updateWifiOnly
             )
         }
 
