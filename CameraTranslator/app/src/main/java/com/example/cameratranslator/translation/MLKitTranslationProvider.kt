@@ -1,5 +1,7 @@
 package com.example.cameratranslator.translation
 
+import android.icu.text.Transliterator
+import android.util.Log
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
@@ -10,8 +12,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 
 class MLKitTranslationProvider : TranslationProvider {
-    private val translators = mutableMapOf<String, Translator>()
-    private val downloadedPairs = mutableSetOf<String>()
+    private data class Entry(val client: Translator, var modelReady: Boolean = false)
+    private val entries = mutableMapOf<String, Entry>()
     private val mutex = Mutex()
 
     override suspend fun translate(text: String, sourceLanguage: String, targetLanguage: String): String? {
@@ -21,31 +23,46 @@ class MLKitTranslationProvider : TranslationProvider {
         if (source == target) return null
 
         return try {
-            // ML Kit needs the source AND target language model. Download the actual pair
-            // before translate(), rather than only downloading English -> Chinese at startup.
-            val translator = mutex.withLock {
+            val entry = mutex.withLock {
                 val key = source + ":" + target
-                val client = translators.getOrPut(key) {
-                    Translation.getClient(TranslatorOptions.Builder()
-                        .setSourceLanguage(source).setTargetLanguage(target).build())
+                val e = entries.getOrPut(key) {
+                    val options = TranslatorOptions.Builder()
+                        .setSourceLanguage(source)
+                        .setTargetLanguage(target)
+                        .build()
+                    Entry(Translation.getClient(options))
                 }
-                if (!downloadedPairs.contains(key)) {
-                    client.downloadModelIfNeeded(DownloadConditions.Builder().build()).await()
-                    downloadedPairs.add(key)
+                if (!e.modelReady) {
+                    e.client.downloadModelIfNeeded(DownloadConditions.Builder().build()).await()
+                    e.modelReady = true
                 }
-                client
+                e
             }
-            translator.translate(text).await().takeIf { it.isNotBlank() }
-        } catch (_: Exception) {
+            val output = entry.client.translate(text).await().takeIf { it.isNotBlank() } ?: return null
+            if (target == TranslateLanguage.CHINESE) {
+                try {
+                    Transliterator.getInstance("Simplified-Traditional").transliterate(output)
+                } catch (e: Exception) {
+                    Log.w("CameraTranslator", "Chinese script conversion unavailable", e)
+                    output
+                }
+            } else output
+        } catch (e: Exception) {
+            Log.w("CameraTranslator", "Translation or model download failed", e)
             null
         }
     }
 
     override suspend fun downloadModelIfNeeded(languageCode: String) {
-        // Download the required pair on demand in translate(), not a dummy language pair.
+        // Model download is source-target pair-specific, handled by translate().
     }
 
-    private fun code(lang: String): String? = when (lang.lowercase()) {
+    fun close() {
+        entries.values.forEach { it.client.close() }
+        entries.clear()
+    }
+
+    private fun code(code: String): String? = when (code.lowercase()) {
         "en", "english" -> TranslateLanguage.ENGLISH
         "ja", "japanese" -> TranslateLanguage.JAPANESE
         "th", "thai" -> TranslateLanguage.THAI
