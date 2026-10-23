@@ -104,12 +104,34 @@ class MainViewModel @Inject constructor(
     private val cacheEngine = mutableMapOf<String, String>()
     private val pending = mutableSetOf<String>()
     private val retryAfter = mutableMapOf<String, Long>()
+    // Cloud failures open a 60s circuit breaker. Never alternate the label
+    // between cloud and offline for every recognized word on a bad network.
+    @Volatile private var cloudRetryAfterMs = 0L
     private val preferences = application.getSharedPreferences("translator_settings", 0)
 
     var translationMode by mutableStateOf(preferences.getString("translation_mode", "auto") ?: "auto")
         private set
     var cloudTokenConfigured by mutableStateOf(cloudCredentials.load() != null)
         private set
+    var cloudTestStatus by mutableStateOf("尚未測試")
+        private set
+
+    /** Explicit diagnostic call. Does not fall back to ML Kit or fake success. */
+    fun testCloudConnection() {
+        if (!cloudTokenConfigured) {
+            cloudTestStatus = "請先儲存 APP_ACCESS_TOKEN"
+            return
+        }
+        cloudTestStatus = "連線測試中…"
+        viewModelScope.launch {
+            val result = cloudTranslator.translate(
+                "Hello world", "en", "zh", cloudCredentials.load().orEmpty()
+            )
+            cloudTestStatus = if (!result.isNullOrBlank() && result != "Hello world")
+                "Azure 雲端測試成功：$result"
+            else "雲端測試失敗：請檢查 Worker /health、APP_ACCESS_TOKEN 與 Azure 免費額度"
+        }
+    }
 
     fun updateTranslationMode(mode: String) {
         if (mode !in listOf("auto", "cloud", "offline") || mode == translationMode) return
@@ -124,6 +146,7 @@ class MainViewModel @Inject constructor(
         val saved = cloudCredentials.save(token)
         if (saved) {
             cloudTokenConfigured = true
+            cloudTestStatus = "密鑰已保存，請按「測試雲端」驗證"
             cache.clear()
             cacheEngine.clear()
             resetRecognitions()
@@ -134,13 +157,15 @@ class MainViewModel @Inject constructor(
     fun clearCloudToken() {
         cloudCredentials.clear()
         cloudTokenConfigured = false
+        cloudTestStatus = "已清除 App 密鑰"
         cache.clear()
         cacheEngine.clear()
         resetRecognitions()
     }
 
     private fun shouldTryCloud(): Boolean {
-        if (translationMode == "offline" || !cloudTokenConfigured) return false
+        if (translationMode == "offline" || !cloudTokenConfigured ||
+            SystemClock.elapsedRealtime() < cloudRetryAfterMs) return false
         if (translationMode == "cloud") return true
         val manager = getApplication<Application>()
             .getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
@@ -155,8 +180,9 @@ class MainViewModel @Inject constructor(
     companion object {
         // Updating the UI for every OCR frame magnifies harmless recognition noise.
         private const val SAMPLE_INTERVAL_MS = 420L
-        private const val LOST_TRACK_GRACE_MS = 1450L
+        private const val LOST_TRACK_GRACE_MS = 1850L
         private const val TEXT_CONFIRM_FRAMES = 3
+        private const val MAX_LIVE_SEGMENTS = 4
     }
 
     var sourceLanguage by mutableStateOf(preferences.getString("source_language", "auto") ?: "auto")
@@ -184,6 +210,7 @@ class MainViewModel @Inject constructor(
         tracked.clear()
         _statusMessage.value = null
         _translationEngine.value = null
+        cloudRetryAfterMs = 0L
         publish()
         lastSampleMs = 0L
     }
@@ -241,7 +268,7 @@ class MainViewModel @Inject constructor(
             val scale = max(max(previous.width(), box.width()),
                 max(previous.height(), box.height())).coerceAtLeast(1)
             val sameText = normalized(old.element.originalText) == matchText
-            if (overlap < 0.30f && !(sameText && distance < scale * 0.5f)) {
+            if (overlap < 0.58f && !(sameText && distance < scale * 0.38f)) {
                 return@mapNotNull null
             }
             id to (overlap + (if (sameText) 1f else 0f) - distance / scale * 0.16f)
@@ -353,7 +380,9 @@ class MainViewModel @Inject constructor(
                 else "離線模型尚未就緒，請到設定下載語言模型"
                 continue
             }
-            if (translationKey in pending || pending.size >= 3 ||
+            // Serialize translations. With multiple parallel requests, slow
+            // replies made the provider badge jump Azure → offline → Azure.
+            if (translationKey in pending || pending.isNotEmpty() ||
                 now < (retryAfter[translationKey] ?: 0L)) continue
             pending.add(translationKey)
             _statusMessage.value = null
@@ -361,6 +390,7 @@ class MainViewModel @Inject constructor(
             val requestedRevision = languageRevision
             viewModelScope.launch(Dispatchers.IO) {
                 var actualEngine: String? = null
+                var cloudFailed = false
                 val translated = try {
                     val cloudResult = if (cloudPreferred) {
                         cloudTranslator.translate(
@@ -372,12 +402,16 @@ class MainViewModel @Inject constructor(
                         actualEngine = "Azure 雲端"
                         cloudResult
                     } else if (offlineReady) {
+                        if (cloudPreferred) cloudFailed = true
                         val offlineResult = translator.translate(
                             element.originalText, element.sourceLanguage, requestedTarget
                         )
                         if (!offlineResult.isNullOrBlank()) actualEngine = "ML Kit 離線"
                         offlineResult
-                    } else null
+                    } else {
+                        if (cloudPreferred) cloudFailed = true
+                        null
+                    }
                 } catch (e: Exception) {
                     Log.w("CameraTranslator", "Translation failed", e)
                     null
@@ -385,6 +419,11 @@ class MainViewModel @Inject constructor(
                 withContext(Dispatchers.Main) {
                     pending.remove(translationKey)
                     if (requestedRevision != languageRevision) return@withContext
+                    if (cloudFailed) {
+                        cloudRetryAfterMs = SystemClock.elapsedRealtime() + 60_000L
+                    } else if (actualEngine == "Azure 雲端") {
+                        cloudRetryAfterMs = 0L
+                    }
                     if (!translated.isNullOrBlank() && translated != element.originalText) {
                         cache[translationKey] = translated
                         if (actualEngine != null) {
@@ -421,8 +460,15 @@ class MainViewModel @Inject constructor(
     }
 
     private fun publish() {
-        val latest = tracked.values.map { it.element }
+        // Keep a few complete, stable sentences instead of spraying a dozen
+        // moving short OCR fragments over the whole camera preview.
+        val latest = tracked.values
+            .filter { it.seenCount >= TEXT_CONFIRM_FRAMES }
+            .sortedBy { it.element.boundingBox?.top ?: Int.MAX_VALUE }
+            .take(MAX_LIVE_SEGMENTS)
+            .map { it.element }
         if (_textElements.value != latest) _textElements.value = latest
+        if (latest.isEmpty() && pending.isEmpty()) _translationEngine.value = null
     }
 
     fun processBitmap(bitmap: Bitmap) {

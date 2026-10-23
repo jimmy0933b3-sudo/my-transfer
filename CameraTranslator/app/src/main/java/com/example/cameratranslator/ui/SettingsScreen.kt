@@ -123,6 +123,14 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         if (tokenFeedback.isNotBlank()) {
             Text(tokenFeedback, style = MaterialTheme.typography.bodySmall)
         }
+        OutlinedButton(
+            onClick = viewModel::testCloudConnection,
+            enabled = viewModel.cloudTokenConfigured
+        ) { Text("測試 Azure 雲端連線") }
+        Text(
+            viewModel.cloudTestStatus,
+            style = MaterialTheme.typography.bodySmall
+        )
         Text(
             "Worker 網址：https://camera-translator-api.jimmy0933.workers.dev\n" +
                 "如未在 Cloudflare 建立 APP_ACCESS_TOKEN Secret，Worker 會拒絕任何翻譯呼叫。",

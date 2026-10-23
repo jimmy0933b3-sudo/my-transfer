@@ -78,7 +78,19 @@ fun CameraPreviewScreen(viewModel: MainViewModel) {
                         result.getThrowable(it)?.let { error -> Log.w("CameraTranslator", "Chinese OCR", error) }
                         result.getValue(it)?.let { value -> extractLines(value, selectedSource, "zh") }
                     }.orEmpty()
-                    viewModel.onCameraTextElements(groupParagraphs(mergeLines(en, zh, ja)))
+                    // Do not mix the three OCR engines indiscriminately. English
+                    // pages caused the CJK engines to hallucinate stray fragments.
+                    val englishLetters = en.sumOf { candidate ->
+                        candidate.originalText.count { it in 'A'..'Z' || it in 'a'..'z' }
+                    }
+                    val chosen = if (selectedSource == "auto" && englishLetters >= 40 &&
+                        en.size >= 2
+                    ) {
+                        // Keep genuine Japanese kana, but suppress guessed Han-only
+                        // fragments on an overwhelmingly Latin page.
+                        mergeLines(en, emptyList(), ja)
+                    } else mergeLines(en, zh, ja)
+                    viewModel.onCameraTextElements(groupParagraphs(chosen))
                 }
             }
         )
@@ -118,8 +130,12 @@ private fun extractLines(result: Text, selectedSource: String, script: String): 
         val kana = kanaCharacters.findAll(value).count()
         val han = hanCharacters.findAll(value).count()
         val latin = latinCharacters.findAll(value).count()
-        // Reject incidental stray glyphs, OCR fragment noise and single letters.
-        if (value.count { it.isLetter() } < 2) return@mapNotNull null
+        // Do not translate isolated words and partial line fragments on busy
+        // pages: OCR may change these every frame and spam Azure/overlays.
+        if (value.count { it.isLetter() } < 3) return@mapNotNull null
+        if (script == "en" && !OcrLineQuality.acceptEnglish(value)) {
+            return@mapNotNull null
+        }
         val language = if (selectedSource != "auto") selectedSource else when (script) {
             "ja" -> "ja"
             "zh" -> "zh"
@@ -202,7 +218,13 @@ private fun groupParagraphs(lines: List<TextElement>): List<TextElement> {
         val language = first.sourceLanguage
 
         fun canAppend(next: TextElement): Boolean {
-            if (next.sourceLanguage != language || parts.size >= 5) return false
+            if (next.sourceLanguage != language || parts.size >= 3) return false
+            // One numbered homework sentence is one translation unit. Do
+            // not merge two separately numbered lines into a paragraph.
+            if (Regex("^\\d{1,2}[.)]\\s*").containsMatchIn(next.originalText)) return false
+            val previousText = parts.last().originalText.trim()
+            if (previousText.endsWith(".") || previousText.endsWith("!") ||
+                previousText.endsWith("?")) return false
             val previous = parts.last().boundingBox ?: return false
             val candidate = next.boundingBox ?: return false
             val shortHeight = min(previous.height(), candidate.height()).toFloat()
@@ -244,5 +266,5 @@ private fun groupParagraphs(lines: List<TextElement>): List<TextElement> {
     }
     return paragraphs.map { it.asElement() }
         .sortedWith(compareBy({ it.boundingBox?.top ?: Int.MAX_VALUE }, { it.boundingBox?.left ?: 0 }))
-        .take(24)
+        .take(14)
 }
