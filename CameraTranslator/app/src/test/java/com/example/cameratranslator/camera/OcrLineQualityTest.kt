@@ -15,6 +15,16 @@ class OcrLineQualityTest {
         assertTrue(OcrLineQuality.acceptEnglish("EXPANDING FLOSS"))
     }
 
+    @Test fun shortBilingualPackagingLabelsAreAccepted() {
+        // Real regression: "BENI BEAR" has only 8 letters, and v1.5.2
+        // dropped it before any cloud or offline translation was attempted.
+        assertTrue(OcrLineQuality.acceptEnglish("BENI BEAR"))
+        assertTrue(OcrLineQuality.acceptEnglish("Beni Bear"))
+        assertTrue(OcrLineQuality.acceptEnglish("Oral B"))
+        assertTrue(OcrLineQuality.acceptEnglish("PM Library 2-11"))
+        assertTrue(OcrLineQuality.acceptEnglish("BENI BEAR 300"))
+    }
+
     @Test fun partialFrameGarbageIsRejected() {
         assertFalse(OcrLineQuality.acceptEnglish("can"))
         assertFalse(OcrLineQuality.acceptEnglish("PM"))
