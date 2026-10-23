@@ -125,6 +125,7 @@ class MainViewModel @Inject constructor(
         if (saved) {
             cloudTokenConfigured = true
             cache.clear()
+            cacheEngine.clear()
             resetRecognitions()
         }
         return saved
