@@ -50,7 +50,8 @@ fun CameraPreviewScreen(viewModel: MainViewModel) {
     // mixed-script false positives. Auto mode uses all supported scripts.
     val selectedSource = viewModel.sourceLanguage
     DisposableEffect(controller, owner, viewModel, selectedSource) {
-        val latin: TextRecognizer? = if (selectedSource == "auto" || selectedSource == "en")
+        val latin: TextRecognizer? = if (selectedSource == "auto" || selectedSource == "en" ||
+            selectedSource == "th")
             TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) else null
         val japanese: TextRecognizer? = if (selectedSource == "auto" || selectedSource == "ja")
             TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build()) else null
@@ -95,7 +96,13 @@ fun CameraPreviewScreen(viewModel: MainViewModel) {
                     // punctuation. Re-grouping individual Japanese lines caused
                     // broken phrases and nonsensical Azure translations.
                     viewModel.onCameraTextElements(
-                        if (selectedSource == "ja") chosen else groupParagraphs(chosen)
+                        when (selectedSource) {
+                            // Thai OCR uses Tesseract on captured still photos.
+                            // Do not pass Latin text as incorrectly tagged Thai.
+                            "th" -> emptyList()
+                            "ja" -> chosen
+                            else -> groupParagraphs(chosen)
+                        }
                     )
                 }
             }
