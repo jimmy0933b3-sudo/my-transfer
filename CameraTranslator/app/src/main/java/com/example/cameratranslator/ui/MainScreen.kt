@@ -22,6 +22,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.example.cameratranslator.camera.CameraPreviewScreen
 import com.example.cameratranslator.core.MainViewModel
+import com.example.cameratranslator.core.SnapshotOcrClipboard
 import com.example.cameratranslator.overlay.TranslationOverlay
 
 private data class LanguageChoice(val code: String, val title: String, val enabled: Boolean = true)
@@ -87,13 +88,12 @@ fun MainScreen(
     val snapshotLines by viewModel.snapshotLines.collectAsState()
     val originalPhoto by viewModel.snapshotOriginalPhoto.collectAsState()
     val translatedPhoto by viewModel.snapshotTranslatedPhoto.collectAsState()
-    var showCapturedOriginal by remember { mutableStateOf(false) }
+    var showCapturedOriginal by remember { mutableStateOf(true) }
     var showPhotoDetails by remember { mutableStateOf(false) }
     var editOcrIndex by remember { mutableStateOf<Int?>(null) }
     var editOcrText by remember { mutableStateOf("") }
     var editTranslationText by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
-    var showOriginal by remember { mutableStateOf(viewModel.showOriginal) }
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
 
@@ -101,7 +101,7 @@ fun MainScreen(
         CameraPreviewScreen(viewModel)
         TranslationOverlay(
             textElements = textElements,
-            showOriginal = showOriginal,
+            showOriginal = false,
             paused = false,
             opacity = viewModel.overlayOpacity,
             onCopy = { selectedText ->
@@ -118,46 +118,6 @@ fun MainScreen(
                     .background(Color(0xD0183035), RoundedCornerShape(8.dp))
                     .padding(10.dp)
             )
-        }
-        if (showOriginal && snapshotStatus == null) {
-            Column(
-                Modifier.align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, bottom = 88.dp)
-                    .heightIn(max = 345.dp)
-                    .background(Color(0xF018303C), RoundedCornerShape(12.dp))
-                    .verticalScroll(rememberScrollState())
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    "原文 OCR（未經翻譯）",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Text(
-                    "請對準清晰文字；點選句子即可複製，或拍照翻譯後查看原文。",
-                    color = Color.White.copy(alpha = 0.8f),
-                    style = MaterialTheme.typography.bodySmall
-                )
-                if (textElements.isEmpty()) {
-                    Text("辨識中，請保持鏡頭穩定。", color = Color.White)
-                }
-                textElements.sortedBy { it.boundingBox?.top ?: Int.MAX_VALUE }.forEach { element ->
-                    Text(
-                        text = element.originalText,
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.fillMaxWidth()
-                            .background(Color.White.copy(alpha = 0.11f), RoundedCornerShape(6.dp))
-                            .clickable {
-                                clipboard.setText(AnnotatedString(element.originalText))
-                                Toast.makeText(context, "已複製原文", Toast.LENGTH_SHORT).show()
-                            }
-                            .padding(8.dp)
-                    )
-                }
-            }
         }
         Column(
             Modifier.align(Alignment.TopCenter)
@@ -191,10 +151,6 @@ fun MainScreen(
                     )
                     Spacer(Modifier.weight(1f))
                 }
-                Button(onClick = viewModel::toggleFlashlight, contentPadding = PaddingValues(horizontal = 12.dp)) {
-                    Text("手電筒")
-                }
-                Spacer(Modifier.width(8.dp))
                 Button(onClick = onNavigateToSettings, contentPadding = PaddingValues(horizontal = 12.dp)) {
                     Text("設定")
                 }
@@ -221,17 +177,12 @@ fun MainScreen(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 94.dp)
             ) { Text("拍照精準翻譯") }
         }
-        if (snapshotStatus == null) Row(
-            Modifier.align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 20.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            Button(onClick = onNavigateToPicker) { Text("相簿") }
-            Button(onClick = {
-                showOriginal = !showOriginal
-                viewModel.showOriginal = showOriginal
-            }) { Text(if (showOriginal) "返回翻譯" else "查看原文") }
+        if (snapshotStatus == null) {
+            Button(
+                onClick = onNavigateToPicker,
+                modifier = Modifier.align(Alignment.BottomStart)
+                    .padding(start = 18.dp, bottom = 20.dp)
+            ) { Text("相簿") }
         }
         // Full-screen still photo is drawn ABOVE CameraX preview and live OCR.
         // Text is already rendered into translatedPhoto's pixels, not placed
@@ -250,11 +201,11 @@ fun MainScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("拍照翻譯成品", color = Color.White,
+                    Text("拍照結果", color = Color.White,
                         style = MaterialTheme.typography.titleMedium)
                     Button(onClick = {
                         showPhotoDetails = false
-                        showCapturedOriginal = false
+                        showCapturedOriginal = true
                         viewModel.closeSnapshot()
                     }) { Text("重新拍照") }
                 }
@@ -284,7 +235,10 @@ fun MainScreen(
                 ) {
                     Button(
                         enabled = originalPhoto != null,
-                        onClick = { showCapturedOriginal = true },
+                        onClick = {
+                            showCapturedOriginal = true
+                            showPhotoDetails = false
+                        },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (showCapturedOriginal)
                                 Color(0xFF006D68) else Color(0xFF6854A5)
@@ -293,7 +247,10 @@ fun MainScreen(
                     ) { Text("查看原圖") }
                     Button(
                         enabled = translatedPhoto != null,
-                        onClick = { showCapturedOriginal = false },
+                        onClick = {
+                            showCapturedOriginal = false
+                            showPhotoDetails = false
+                        },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (!showCapturedOriginal)
                                 Color(0xFF006D68) else Color(0xFF6854A5)
@@ -301,6 +258,39 @@ fun MainScreen(
                         modifier = Modifier.weight(1f)
                     ) { Text("查看翻譯圖") }
                 }
+                if (showCapturedOriginal) {
+                    val fullOriginal = SnapshotOcrClipboard.all(snapshotLines)
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            enabled = fullOriginal.isNotBlank(),
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                clipboard.setText(AnnotatedString(fullOriginal))
+                                Toast.makeText(context, "已複製全部 OCR 原文", Toast.LENGTH_SHORT).show()
+                            }
+                        ) { Text("複製全部原文") }
+                        OutlinedButton(
+                            enabled = snapshotLines.isNotEmpty(),
+                            modifier = Modifier.weight(1f),
+                            onClick = { showPhotoDetails = !showPhotoDetails }
+                        ) {
+                            Text(
+                                if (showPhotoDetails) "收合原文" else "逐段複製 OCR",
+                                color = Color.White
+                            )
+                        }
+                    }
+                    if (snapshotLines.isEmpty()) {
+                        Text(
+                            "照片正在辨識文字，完成後即可複製 OCR 原文。",
+                            color = Color.White.copy(alpha = 0.85f),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                } else {
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -335,9 +325,14 @@ fun MainScreen(
                         }
                     ) { Text("分享圖片", color = Color.White) }
                 }
-                TextButton(onClick = { showPhotoDetails = !showPhotoDetails }) {
-                    Text(if (showPhotoDetails) "收合 OCR 明細" else "查看／修正 OCR 原文及譯文",
-                        color = Color.White)
+                TextButton(
+                    onClick = { showPhotoDetails = !showPhotoDetails }
+                ) {
+                    Text(
+                        if (showPhotoDetails) "收合 OCR 修正" else "查看／修正 OCR 原文及譯文",
+                        color = Color.White
+                    )
+                }
                 }
                 if (showPhotoDetails) {
                     Column(
@@ -351,16 +346,31 @@ fun MainScreen(
                                 Modifier.fillMaxWidth()
                                     .background(Color(0xFF22363A), RoundedCornerShape(8.dp))
                                     .clickable {
-                                        editOcrIndex = i
-                                        editOcrText = line.original
-                                        editTranslationText = line.translated.orEmpty()
+                                        if (showCapturedOriginal) {
+                                            clipboard.setText(AnnotatedString(line.original))
+                                            Toast.makeText(
+                                                context,
+                                                "已複製第 " + (i + 1) + " 段原文",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        } else {
+                                            editOcrIndex = i
+                                            editOcrText = line.original
+                                            editTranslationText = line.translated.orEmpty()
+                                        }
                                     }
                                     .padding(10.dp)
                             ) {
-                                Text((i+1).toString() + ". 原文：" + line.original,
-                                    color = Color.White)
-                                Text(line.provider + "：" + (line.translated ?: "尚未完成"),
-                                    color = Color(0xFFB0E1CB))
+                                Text(
+                                    (i + 1).toString() + ". 原文：" + line.original,
+                                    color = Color.White
+                                )
+                                Text(
+                                    if (showCapturedOriginal) "點這段可直接複製"
+                                    else line.provider + "：" + (line.translated ?: "尚未完成"),
+                                    color = Color(0xFFB0E1CB),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
                             }
                         }
                     }

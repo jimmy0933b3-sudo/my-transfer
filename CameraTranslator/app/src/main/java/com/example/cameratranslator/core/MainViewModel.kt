@@ -488,13 +488,8 @@ class MainViewModel @Inject constructor(
     }
 
     @Volatile var isPaused = false
-    var showOriginal = false
+    // Only the captured original photo exposes OCR copy controls.
     var cameraController: LifecycleCameraController? = null
-    var isFlashlightOn = false
-    fun toggleFlashlight() {
-        isFlashlightOn = !isFlashlightOn
-        cameraController?.enableTorch(isFlashlightOn)
-    }
 
     fun showCameraError() {
         _statusMessage.value = "相機無法啟動，請檢查權限"
