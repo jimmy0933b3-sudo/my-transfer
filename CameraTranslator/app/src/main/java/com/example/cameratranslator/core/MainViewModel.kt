@@ -1,6 +1,9 @@
 package com.example.cameratranslator.core
 
 import android.app.Application
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.SystemClock
@@ -17,6 +20,8 @@ import com.example.cameratranslator.history.HistoryDao
 import com.example.cameratranslator.history.TranslationHistory
 import com.example.cameratranslator.ocr.MLKitOcrProvider
 import com.example.cameratranslator.translation.MLKitTranslationProvider
+import com.example.cameratranslator.translation.CloudCredentialStore
+import com.example.cameratranslator.translation.CloudTranslationProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,6 +43,8 @@ class MainViewModel @Inject constructor(
 ) : AndroidViewModel(application) {
     private val photoOcr = MLKitOcrProvider()
     private val translator = MLKitTranslationProvider()
+    private val cloudTranslator = CloudTranslationProvider()
+    private val cloudCredentials = CloudCredentialStore(application)
     val modelStatuses = translator.modelStatuses
     var wifiOnly by androidx.compose.runtime.mutableStateOf(
         application.getSharedPreferences("translator_settings", 0)
@@ -93,6 +100,49 @@ class MainViewModel @Inject constructor(
     private val pending = mutableSetOf<String>()
     private val retryAfter = mutableMapOf<String, Long>()
     private val preferences = application.getSharedPreferences("translator_settings", 0)
+
+    var translationMode by mutableStateOf(preferences.getString("translation_mode", "auto") ?: "auto")
+        private set
+    var cloudTokenConfigured by mutableStateOf(cloudCredentials.load() != null)
+        private set
+
+    fun updateTranslationMode(mode: String) {
+        if (mode !in listOf("auto", "cloud", "offline") || mode == translationMode) return
+        translationMode = mode
+        preferences.edit().putString("translation_mode", mode).apply()
+        cache.clear()
+        resetRecognitions()
+    }
+
+    fun saveCloudToken(token: String): Boolean {
+        val saved = cloudCredentials.save(token)
+        if (saved) {
+            cloudTokenConfigured = true
+            cache.clear()
+            resetRecognitions()
+        }
+        return saved
+    }
+
+    fun clearCloudToken() {
+        cloudCredentials.clear()
+        cloudTokenConfigured = false
+        cache.clear()
+        resetRecognitions()
+    }
+
+    private fun shouldTryCloud(): Boolean {
+        if (translationMode == "offline" || !cloudTokenConfigured) return false
+        if (translationMode == "cloud") return true
+        val manager = getApplication<Application>()
+            .getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return false
+        val capabilities = manager.getNetworkCapabilities(manager.activeNetwork ?: return false)
+            ?: return false
+        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+    }
+
 
     companion object {
         // Updating the UI for every OCR frame magnifies harmless recognition noise.
@@ -275,18 +325,31 @@ class MainViewModel @Inject constructor(
             }
             val cached = cache[translationKey]
             if (!cached.isNullOrBlank()) continue
-            if (!translator.isReadyFor(element.sourceLanguage, targetLanguage)) {
-                _statusMessage.value = "離線模型尚未就緒，請到設定下載語言模型"
+            val cloudPreferred = shouldTryCloud()
+            val offlineReady = translator.isReadyFor(element.sourceLanguage, targetLanguage)
+            if (!cloudPreferred && !offlineReady) {
+                _statusMessage.value = if (cloudTokenConfigured && translationMode == "auto")
+                    "目前使用行動網路；自動模式需要 Wi-Fi，或請在設定改為雲端優先"
+                else "離線模型尚未就緒，請到設定下載語言模型"
                 continue
             }
-            if (translationKey in pending || now < (retryAfter[translationKey] ?: 0L)) continue
+            if (translationKey in pending || pending.size >= 3 ||
+                now < (retryAfter[translationKey] ?: 0L)) continue
             pending.add(translationKey)
             _statusMessage.value = null
             val requestedTarget = targetLanguage
             val requestedRevision = languageRevision
             viewModelScope.launch(Dispatchers.IO) {
                 val translated = try {
-                    translator.translate(element.originalText, element.sourceLanguage, requestedTarget)
+                    val cloudResult = if (cloudPreferred) {
+                        cloudTranslator.translate(
+                            element.originalText, element.sourceLanguage, requestedTarget,
+                            cloudCredentials.load().orEmpty()
+                        )
+                    } else null
+                    cloudResult ?: if (offlineReady) {
+                        translator.translate(element.originalText, element.sourceLanguage, requestedTarget)
+                    } else null
                 } catch (e: Exception) {
                     Log.w("CameraTranslator", "Translation failed", e)
                     null
@@ -308,7 +371,9 @@ class MainViewModel @Inject constructor(
                         _statusMessage.value = null
                     } else {
                         retryAfter[translationKey] = SystemClock.elapsedRealtime() + 12000L
-                        _statusMessage.value = "翻譯暫時失敗，請調整鏡頭或至設定檢查模型"
+                        _statusMessage.value = if (cloudPreferred && !offlineReady)
+                            "雲端翻譯未連線：請檢查 Worker 部署與 App 存取密鑰"
+                        else "翻譯暫時失敗，請檢查網路或離線語言模型"
                     }
                     publish()
                 }
