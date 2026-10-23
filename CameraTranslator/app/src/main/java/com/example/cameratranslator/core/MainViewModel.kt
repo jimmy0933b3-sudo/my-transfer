@@ -24,6 +24,7 @@ import com.example.cameratranslator.core.models.TextElement
 import com.example.cameratranslator.history.HistoryDao
 import com.example.cameratranslator.history.TranslationHistory
 import com.example.cameratranslator.ocr.MLKitOcrProvider
+import com.example.cameratranslator.ocr.ThaiPhotoOcrProvider
 import com.example.cameratranslator.translation.MLKitTranslationProvider
 import com.example.cameratranslator.translation.CloudCredentialStore
 import com.example.cameratranslator.translation.CloudTranslationProvider
@@ -47,6 +48,29 @@ class MainViewModel @Inject constructor(
     private val historyDao: HistoryDao
 ) : AndroidViewModel(application) {
     private val photoOcr = MLKitOcrProvider(application)
+    private val thaiOcrModels = ThaiPhotoOcrProvider(application)
+    var thaiOcrModelStatus by mutableStateOf(
+        if (thaiOcrModels.isModelInstalled()) "已下載，可離線辨識泰文"
+        else "尚未下載（約 1 MB）"
+    )
+        private set
+
+    fun downloadThaiOcrModel() {
+        if (thaiOcrModels.isModelInstalled()) {
+            thaiOcrModelStatus = "已下載，可離線辨識泰文"
+            return
+        }
+        thaiOcrModelStatus = "下載中，請保持網路連線…"
+        viewModelScope.launch {
+            try {
+                thaiOcrModels.downloadModel()
+                thaiOcrModelStatus = "已下載，可離線辨識泰文"
+            } catch (e: Exception) {
+                thaiOcrModelStatus = "下載失敗，請點重試：" + (e.message ?: "網路錯誤")
+            }
+        }
+    }
+
     private val translator = MLKitTranslationProvider()
     private val cloudTranslator = CloudTranslationProvider()
     private val cloudCredentials = CloudCredentialStore(application)
@@ -133,6 +157,9 @@ class MainViewModel @Inject constructor(
                                 val raw = try {
                                     photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
                                 } finally { bitmap.recycle() }
+                                if (thaiOcrModels.isModelInstalled()) {
+                                    thaiOcrModelStatus = "已下載，可離線辨識泰文"
+                                }
                                 val selected = raw.filter {
                                     !it.originalText.isBlank() && it.originalText.length > 1
                                 }.distinctBy { it.originalText.trim() }.take(18)
