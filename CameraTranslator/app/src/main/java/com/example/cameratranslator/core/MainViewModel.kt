@@ -46,7 +46,7 @@ class MainViewModel @Inject constructor(
     application: Application,
     private val historyDao: HistoryDao
 ) : AndroidViewModel(application) {
-    private val photoOcr = MLKitOcrProvider()
+    private val photoOcr = MLKitOcrProvider(application)
     private val translator = MLKitTranslationProvider()
     private val cloudTranslator = CloudTranslationProvider()
     private val cloudCredentials = CloudCredentialStore(application)
@@ -122,7 +122,10 @@ class MainViewModel @Inject constructor(
                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                         viewModelScope.launch(Dispatchers.IO) {
                             try {
-                                _snapshotStatus.value = "正在辨識完整文字區塊…"
+                                _snapshotStatus.value = if (sourceLanguage == "th")
+                                    "正在準備泰文 OCR 模型並辨識照片（首次使用需網路）…"
+                                else "正在辨識完整文字區塊…"
+
                                 val bitmap = SnapshotBitmapDecoder.decode(file)
                                     ?: error("無法讀取照片")
                                 val requestedSource = sourceLanguage
@@ -145,12 +148,19 @@ class MainViewModel @Inject constructor(
                                 var translatedCount = 0
                                 for ((i, block) in selected.withIndex()) {
                                     val original = block.originalText.trim()
-                                    val brand = requestedSource == "ja" &&
-                                        original.any { it.isLetter() } &&
+                                    // Product trademarks should not turn into strange
+                                    // Chinese transliterations on JA/ZH/TH packaging.
+                                    // Restrict this to short Latin-only logo-style names.
+                                    val brand = requestedSource != "en" &&
+                                        block.sourceLanguage != "th" &&
+                                        original.length <= 50 &&
+                                        original.any { it in 'A'..'Z' } &&
                                         original.none { it in '\u3040'..'\u30ff' ||
-                                            it in '\u3400'..'\u9fff' } &&
+                                            it in '\u3400'..'\u9fff' ||
+                                            it in '\u0E00'..'\u0E7F' } &&
                                         original.all { it.isLetterOrDigit() ||
-                                            it.isWhitespace() || it in "-®©.&" }
+                                            it.isWhitespace() || it in "-®©.&" } &&
+                                        original.split(Regex("\\s+")).size <= 5
                                     val translated: String?
                                     val provider: String
                                     if (requestedSource == requestedTarget ||
@@ -189,7 +199,9 @@ class MainViewModel @Inject constructor(
                                     translatedCount + " 段。請比對原文及譯文。"
                             } catch (e: Exception) {
                                 Log.w("CameraTranslator", "Still photo translation failed", e)
-                                _snapshotStatus.value = "拍照辨識失敗：請重新拍攝並確認對焦"
+                                _snapshotStatus.value = if (sourceLanguage == "th")
+                                    "泰文 OCR 發生問題：" + (e.message ?: "請重拍或檢查模型")
+                                else "拍照辨識失敗：請重新拍攝並確認對焦"
                             } finally {
                                 file.delete()
                             }
