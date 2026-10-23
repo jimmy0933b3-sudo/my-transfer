@@ -108,19 +108,20 @@ private fun CameraShutter(onClick: () -> Unit) {
             modifier = Modifier
                 .size(78.dp)
                 .clip(CircleShape)
-                .border(3.dp, Color.White, CircleShape)
+                .background(Color.White.copy(alpha = 0.10f))
+                .border(3.dp, Color.White.copy(alpha = 0.95f), CircleShape)
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
             Box(
-                Modifier.size(60.dp)
+                Modifier.size(58.dp)
                     .clip(CircleShape)
-                    .background(Mist)
+                    .background(Brush.radialGradient(listOf(Color.White, Color(0xFFADEADF))))
                     .border(2.dp, Night.copy(alpha = 0.22f), CircleShape)
             )
         }
         Text("拍照翻譯", color = Color.White,
-            fontWeight = FontWeight.Medium, fontSize = 13.sp)
+            fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
     }
 }
 
@@ -259,17 +260,9 @@ fun MainScreen(
                     Spacer(Modifier.weight(1f))
                     CameraShutter(onClick = { viewModel.captureSnapshot(context) })
                     Spacer(Modifier.weight(1f))
-                    Column(Modifier.width(92.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally) {
-                        Box(Modifier.size(47.dp).clip(RoundedCornerShape(14.dp))
-                            .background(Color.White.copy(alpha = 0.10f)),
-                            contentAlignment = Alignment.Center) {
-                            Text("文", fontSize = 22.sp, color = Mint)
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        Text("拍完再翻譯", color = Color.White.copy(alpha = 0.76f),
-                            fontSize = 12.sp)
-                    }
+                    // Match the album slot to keep the shutter perfectly centered.
+                    // The former "文／拍完再翻譯" decoration was not a real action.
+                    Spacer(Modifier.width(92.dp))
                 }
             }
         }
