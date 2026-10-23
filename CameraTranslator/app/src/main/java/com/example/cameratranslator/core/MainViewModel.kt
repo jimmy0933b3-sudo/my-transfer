@@ -24,6 +24,7 @@ import com.example.cameratranslator.core.models.TextElement
 import com.example.cameratranslator.history.HistoryDao
 import com.example.cameratranslator.history.TranslationHistory
 import com.example.cameratranslator.ocr.MLKitOcrProvider
+import com.example.cameratranslator.ocr.ThaiOcrEngine
 import com.example.cameratranslator.translation.MLKitTranslationProvider
 import com.example.cameratranslator.translation.CloudCredentialStore
 import com.example.cameratranslator.translation.CloudTranslationProvider
@@ -47,6 +48,27 @@ class MainViewModel @Inject constructor(
     private val historyDao: HistoryDao
 ) : AndroidViewModel(application) {
     private val photoOcr = MLKitOcrProvider()
+    private val thaiOcr = ThaiOcrEngine(application)
+    private val _thaiOcrStatus = MutableStateFlow(
+        if (thaiOcr.isInstalled()) "泰文 OCR 模型已安裝，可離線拍照辨識"
+        else "泰文 OCR 模型尚未下載（拍照模式）"
+    )
+    val thaiOcrStatus: StateFlow<String> = _thaiOcrStatus.asStateFlow()
+    val thaiOcrInstalled: Boolean get() = thaiOcr.isInstalled()
+
+    fun downloadThaiOcrModel() {
+        if (thaiOcr.isInstalled()) {
+            _thaiOcrStatus.value = "泰文 OCR 模型已安裝，可離線拍照辨識"
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            _thaiOcrStatus.value = "正在下載泰文字形辨識模型（約 1 MB）…"
+            val success = thaiOcr.install()
+            _thaiOcrStatus.value = if (success)
+                "泰文 OCR 模型已安裝，可離線拍照辨識"
+            else "下載失敗，請檢查網路後點「重新下載」"
+        }
+    }
     private val translator = MLKitTranslationProvider()
     private val cloudTranslator = CloudTranslationProvider()
     private val cloudCredentials = CloudCredentialStore(application)
@@ -128,29 +150,52 @@ class MainViewModel @Inject constructor(
                                 val requestedSource = sourceLanguage
                                 val requestedTarget = targetLanguage
                                 val raw = try {
-                                    photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
+                                    when (requestedSource) {
+                                        "th" -> {
+                                            if (!thaiOcr.isInstalled()) {
+                                                _snapshotStatus.value =
+                                                    "泰文 OCR 模型尚未安裝。請到設定下載泰文模型後重新拍攝。"
+                                                return@launch
+                                            }
+                                            thaiOcr.recognize(bitmap)
+                                        }
+                                        "auto" -> {
+                                            val ml = photoOcr.recognizeTextFromBitmap(bitmap, "auto")
+                                            // ML Kit lacks Thai. Try Thai fallback only when no
+                                            // ML Kit text is found, and require actual Thai chars.
+                                            if (ml.isEmpty() && thaiOcr.isInstalled()) {
+                                                thaiOcr.recognize(bitmap).filter {
+                                                    SnapshotTextPolicy.containsThai(it.originalText)
+                                                }
+                                            } else ml
+                                        }
+                                        else -> photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
+                                    }
                                 } finally { bitmap.recycle() }
                                 val selected = raw.filter {
                                     !it.originalText.isBlank() && it.originalText.length > 1
-                                }.distinctBy { it.originalText.trim() }.take(18)
+                                }.map { it.copy(
+                                    sourceLanguage = SnapshotTextPolicy.sourceForText(
+                                        it.originalText, it.sourceLanguage
+                                    )
+                                ) }.distinctBy { it.sourceLanguage + ":" + it.originalText.trim() }
+                                    .take(18)
                                 if (selected.isEmpty()) {
                                     _snapshotStatus.value = "沒有辨識到清楚文字，請靠近、避開反光再拍攝"
                                     return@launch
                                 }
                                 _snapshotLines.value = selected.map {
-                                    SnapshotTranslationLine(it.originalText.trim())
+                                    SnapshotTranslationLine(
+                                        original = it.originalText.trim(),
+                                        sourceLanguage = it.sourceLanguage
+                                    )
                                 }
                                 _snapshotStatus.value = "辨識到 " + selected.size + " 段，逐段翻譯中…"
                                 val result = _snapshotLines.value.toMutableList()
                                 var translatedCount = 0
                                 for ((i, block) in selected.withIndex()) {
                                     val original = block.originalText.trim()
-                                    val brand = requestedSource == "ja" &&
-                                        original.any { it.isLetter() } &&
-                                        original.none { it in '\u3040'..'\u30ff' ||
-                                            it in '\u3400'..'\u9fff' } &&
-                                        original.all { it.isLetterOrDigit() ||
-                                            it.isWhitespace() || it in "-®©.&" }
+                                    val brand = SnapshotTextPolicy.isLatinBrand(original)
                                     val translated: String?
                                     val provider: String
                                     if (requestedSource == requestedTarget ||
