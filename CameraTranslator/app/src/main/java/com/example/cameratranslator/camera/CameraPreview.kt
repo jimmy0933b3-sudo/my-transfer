@@ -59,7 +59,9 @@ fun CameraPreviewScreen(viewModel: MainViewModel) {
         val recognizers = listOfNotNull(latin, japanese, chinese)
 
         viewModel.cameraController = controller
-        controller.setImageAnalysisAnalyzer(
+        // Thai uses full-resolution still-photo Tesseract OCR. Do not pass an
+        // empty recognizer list to MlKitAnalyzer (it would crash on some devices).
+        if (recognizers.isNotEmpty()) controller.setImageAnalysisAnalyzer(
             executor,
             MlKitAnalyzer(
                 recognizers,
