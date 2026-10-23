@@ -113,6 +113,25 @@ class MainViewModel @Inject constructor(
         private set
     var cloudTokenConfigured by mutableStateOf(cloudCredentials.load() != null)
         private set
+    var cloudTestStatus by mutableStateOf("尚未測試")
+        private set
+
+    /** Explicit diagnostic call. Does not fall back to ML Kit or fake success. */
+    fun testCloudConnection() {
+        if (!cloudTokenConfigured) {
+            cloudTestStatus = "請先儲存 APP_ACCESS_TOKEN"
+            return
+        }
+        cloudTestStatus = "連線測試中…"
+        viewModelScope.launch {
+            val result = cloudTranslator.translate(
+                "Hello world", "en", "zh", cloudCredentials.load().orEmpty()
+            )
+            cloudTestStatus = if (!result.isNullOrBlank() && result != "Hello world")
+                "Azure 雲端測試成功：$result"
+            else "雲端測試失敗：請檢查 Worker /health、APP_ACCESS_TOKEN 與 Azure 免費額度"
+        }
+    }
 
     fun updateTranslationMode(mode: String) {
         if (mode !in listOf("auto", "cloud", "offline") || mode == translationMode) return
@@ -127,6 +146,7 @@ class MainViewModel @Inject constructor(
         val saved = cloudCredentials.save(token)
         if (saved) {
             cloudTokenConfigured = true
+            cloudTestStatus = "密鑰已保存，請按「測試雲端」驗證"
             cache.clear()
             cacheEngine.clear()
             resetRecognitions()
@@ -137,6 +157,7 @@ class MainViewModel @Inject constructor(
     fun clearCloudToken() {
         cloudCredentials.clear()
         cloudTokenConfigured = false
+        cloudTestStatus = "已清除 App 密鑰"
         cache.clear()
         cacheEngine.clear()
         resetRecognitions()
@@ -443,14 +464,11 @@ class MainViewModel @Inject constructor(
         // moving short OCR fragments over the whole camera preview.
         val latest = tracked.values
             .filter { it.seenCount >= TEXT_CONFIRM_FRAMES }
-            .sortedWith(compareByDescending<Tracked> {
-                !it.element.translatedText.isNullOrBlank()
-            }.thenByDescending { it.seenCount }.thenBy {
-                it.element.boundingBox?.top ?: Int.MAX_VALUE
-            })
+            .sortedBy { it.element.boundingBox?.top ?: Int.MAX_VALUE }
             .take(MAX_LIVE_SEGMENTS)
             .map { it.element }
         if (_textElements.value != latest) _textElements.value = latest
+        if (latest.isEmpty() && pending.isEmpty()) _translationEngine.value = null
     }
 
     fun processBitmap(bitmap: Bitmap) {
