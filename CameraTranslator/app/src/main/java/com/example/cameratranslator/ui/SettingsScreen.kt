@@ -18,7 +18,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -26,7 +25,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,7 +39,6 @@ import com.example.cameratranslator.translation.ModelStatus
 
 @Composable
 fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
-    var opacity by remember { mutableFloatStateOf(viewModel.overlayOpacity) }
     var accessToken by remember { mutableStateOf("") }
     var tokenFeedback by remember { mutableStateOf("") }
     val statuses by viewModel.modelStatuses.collectAsState()
@@ -63,11 +60,8 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     ) {
         TextButton(onClick = onBack) { Text("← 返回相機") }
         Text("翻譯設定", style = MaterialTheme.typography.headlineMedium)
-        Text("高解析度拍照翻譯支援英文、日文、中文及泰文；來源 Auto 也可搭配拍照辨識。泰文即時相機 OCR 尚未支援。", style = MaterialTheme.typography.bodySmall)
-        Text("相機上方可手動選來源與目標語系。暫停後點文字框即可複製；原文按鈕可顯示 OCR 結果。")
-
-        Text("翻譯框不透明度：" + (opacity * 100).toInt() + "%")
-        Slider(value = opacity, onValueChange = { opacity = it }, valueRange = 0.35f..1f)
+        Text("目前只提供拍照後翻譯：對準文字、按快門，完成後在照片原字位置顯示譯文。", style = MaterialTheme.typography.bodySmall)
+        Text("可選英文、日文、中文、泰文或自動辨識。結果可切換原圖／翻譯圖、校正文字、存入相簿及分享。")
 
         HorizontalDivider()
         Text("雲端翻譯（Azure F0）", style = MaterialTheme.typography.titleLarge)
@@ -218,20 +212,20 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             style = MaterialTheme.typography.bodySmall
         )
         Text(
-            "注意：泰文翻譯模型可下載，但泰文相機文字辨識仍需要另外完成 OCR 支援。",
+            "泰文照片由 Tesseract OCR 辨識；請先下載泰文字形模型。英文、日文和中文使用 ML Kit 照片 OCR。",
             style = MaterialTheme.typography.bodySmall
         )
         HorizontalDivider()
         Text("翻譯品質與用量", style = MaterialTheme.typography.titleLarge)
         Text(
             "已支援 Azure Translator F0 雲端翻譯。翻譯失敗時會改用已下載的 ML Kit 模型。" +
-                "OCR 同段落重複辨識會使用本機快取，仍請在 Azure 查看用量和額度；" +
+                "只有拍攝照片或選取相簿照片後才執行 OCR 與翻譯，仍請在 Azure 查看用量和額度；" +
                 "Cloudflare 單一 Worker 執行個體的限速不等於全域保證上限。",
             style = MaterialTheme.typography.bodySmall
         )
         Spacer(Modifier.height(12.dp))
         Button(
-            onClick = { viewModel.saveOverlayOpacity(opacity); onBack() },
+            onClick = onBack,
             modifier = Modifier.fillMaxWidth()
         ) { Text("確定並返回相機") }
         Spacer(Modifier.height(20.dp))
