@@ -132,11 +132,15 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
                     id = text.hashCode().toString() + ":" + bounds.left / 24 + ":" + bounds.top / 24,
                     originalText = text,
                     boundingBox = bounds,
-                    sourceLanguage = forcedLanguage ?: when {
-                        kanaChars.containsMatchIn(text) -> "ja"
-                        hanChars.containsMatchIn(text) -> "zh"
-                        else -> "en"
-                    }
+                    sourceLanguage = PhotoOcrLanguages.resolveBlockSource(
+                        text,
+                        forcedLanguage,
+                        when {
+                            kanaChars.containsMatchIn(text) -> "ja"
+                            hanChars.containsMatchIn(text) -> "zh"
+                            else -> "en"
+                        }
+                    )
                 )
             }
         } catch (_: Exception) {

@@ -19,4 +19,19 @@ class PhotoOcrLanguagesTest {
         assertFalse(PhotoOcrLanguages.containsThai("こんにちは"))
         assertFalse(PhotoOcrLanguages.containsThai("你好世界"))
     }
+
+    @Test fun englishInsideJapanesePhotoKeepsEnglishSource() {
+        org.junit.Assert.assertEquals(
+            "en", PhotoOcrLanguages.resolveBlockSource("Playbook", "ja", "en")
+        )
+        org.junit.Assert.assertEquals(
+            "en", PhotoOcrLanguages.resolveBlockSource("BENI BEAR", "zh", "en")
+        )
+        org.junit.Assert.assertEquals(
+            "ja", PhotoOcrLanguages.resolveBlockSource("こんにちは", "ja", "ja")
+        )
+        org.junit.Assert.assertEquals(
+            "zh", PhotoOcrLanguages.resolveBlockSource("邦尼熊", null, "zh")
+        )
+    }
 }

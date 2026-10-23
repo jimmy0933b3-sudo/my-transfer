@@ -49,20 +49,23 @@ internal object PhotoTranslationRenderer {
             }
             var chosenLines: List<String>? = null
             var lineSpacing = 0f
-            var fontSize = min(70f, availableHeight * 0.8f).coerceAtLeast(8f)
+            // Use the photo's ORIGINAL pixel coordinates: a 70px cap made
+            // four Chinese characters tiny inside 200px-tall product titles.
+            var fontSize = PhotoRenderSizing.initialFontSize(availableHeight)
+            val maxLines = PhotoRenderSizing.lineLimit(element.originalText)
             while (fontSize >= 9f) {
                 paint.textSize = fontSize
                 val wrapped = wrap(translated.trim().replace('\n', ' '), paint,
                     availableWidth.coerceAtLeast(5f))
-                val spacing = fontSize * 1.17f
-                if (wrapped.isNotEmpty() && wrapped.size <= 6 &&
+                val spacing = fontSize * 1.16f
+                if (wrapped.isNotEmpty() && wrapped.size <= maxLines &&
                     wrapped.size * spacing <= availableHeight &&
                     wrapped.all { paint.measureText(it) <= availableWidth + 1f }) {
                     chosenLines = wrapped
                     lineSpacing = spacing
                     break
                 }
-                fontSize -= 1.5f
+                fontSize -= PhotoRenderSizing.decrement(fontSize)
             }
             if (chosenLines == null) {
                 skipped++
@@ -130,10 +133,14 @@ internal object PhotoTranslationRenderer {
         val height = rect.height()
         if (width <= 0 || height <= 0) return
         val pixels = IntArray(width * height)
-        val l = (rect.left - 3).coerceIn(0, original.width - 1)
-        val r = (rect.right + 2).coerceIn(0, original.width - 1)
-        val t = (rect.top - 3).coerceIn(0, original.height - 1)
-        val b = (rect.bottom + 2).coerceIn(0, original.height - 1)
+        // OCR bounds hug the glyphs. Sampling only 2-3px outside often
+        // picks up the dark ink/outline and creates a muddy gray rectangle.
+        // Sample farther into the label's actual surrounding background.
+        val margin = (min(width, height) * 0.085f).toInt().coerceIn(4, 24)
+        val l = (rect.left - margin).coerceIn(0, original.width - 1)
+        val r = (rect.right + margin).coerceIn(0, original.width - 1)
+        val t = (rect.top - margin).coerceIn(0, original.height - 1)
+        val b = (rect.bottom + margin).coerceIn(0, original.height - 1)
         for (y in 0 until height) {
             val fy = y.toFloat() / height.coerceAtLeast(1)
             val left = original.getPixel(l, rect.top + y)
