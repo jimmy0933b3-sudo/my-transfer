@@ -49,20 +49,23 @@ internal object PhotoTranslationRenderer {
             }
             var chosenLines: List<String>? = null
             var lineSpacing = 0f
-            var fontSize = min(70f, availableHeight * 0.8f).coerceAtLeast(8f)
+            // Use the photo's ORIGINAL pixel coordinates: a 70px cap made
+            // four Chinese characters tiny inside 200px-tall product titles.
+            var fontSize = PhotoRenderSizing.initialFontSize(availableHeight)
+            val maxLines = PhotoRenderSizing.lineLimit(element.originalText)
             while (fontSize >= 9f) {
                 paint.textSize = fontSize
                 val wrapped = wrap(translated.trim().replace('\n', ' '), paint,
                     availableWidth.coerceAtLeast(5f))
-                val spacing = fontSize * 1.17f
-                if (wrapped.isNotEmpty() && wrapped.size <= 6 &&
+                val spacing = fontSize * 1.16f
+                if (wrapped.isNotEmpty() && wrapped.size <= maxLines &&
                     wrapped.size * spacing <= availableHeight &&
                     wrapped.all { paint.measureText(it) <= availableWidth + 1f }) {
                     chosenLines = wrapped
                     lineSpacing = spacing
                     break
                 }
-                fontSize -= 1.5f
+                fontSize -= PhotoRenderSizing.decrement(fontSize)
             }
             if (chosenLines == null) {
                 skipped++
