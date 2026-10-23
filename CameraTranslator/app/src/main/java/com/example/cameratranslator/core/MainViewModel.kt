@@ -234,85 +234,7 @@ class MainViewModel @Inject constructor(
 
                                 val bitmap = SnapshotBitmapDecoder.decode(file)
                                     ?: error("無法讀取照片")
-                                val requestedSource = sourceLanguage
-                                val requestedTarget = targetLanguage
-                                _snapshotOriginalPhoto.value = bitmap
-                                val raw = photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
-                                if (thaiOcrModels.isModelInstalled()) {
-                                    thaiOcrModelStatus = "已下載，可離線辨識泰文"
-                                }
-                                val selected = raw.filter {
-                                    !it.originalText.isBlank() && it.originalText.length > 1
-                                }.distinctBy { it.originalText.trim() }.take(18)
-                                if (selected.isEmpty()) {
-                                    _snapshotStatus.value = "沒有辨識到清楚文字，請靠近、避開反光再拍攝"
-                                    return@launch
-                                }
-                                capturedSnapshotElements = selected
-                                _snapshotLines.value = selected.map {
-                                    SnapshotTranslationLine(it.originalText.trim())
-                                }
-                                _snapshotStatus.value = "辨識到 " + selected.size + " 段，逐段翻譯中…"
-                                val result = _snapshotLines.value.toMutableList()
-                                var translatedCount = 0
-                                for ((i, block) in selected.withIndex()) {
-                                    val original = block.originalText.trim()
-                                    // Product trademarks should not turn into strange
-                                    // Chinese transliterations on JA/ZH/TH packaging.
-                                    // Restrict this to short Latin-only logo-style names.
-                                    val brand = PhotoBrandPolicy.shouldPreserve(
-                                        original, block.sourceLanguage
-                                    )
-                                    val translated: String?
-                                    val provider: String
-                                    if (requestedSource == requestedTarget ||
-                                        brand || block.sourceLanguage == requestedTarget
-                                    ) {
-                                        translated = original
-                                        provider = if (brand) "品牌名稱保留原文" else "相同語言原文"
-                                    } else {
-                                        val cloud = if (shouldTryCloud())
-                                            cloudTranslator.translate(
-                                                original.take(1500),
-                                                block.sourceLanguage, requestedTarget,
-                                                cloudCredentials.load().orEmpty()
-                                            ) else null
-                                        if (!cloud.isNullOrBlank()) {
-                                            translated = cloud
-                                            provider = "Azure 雲端"
-                                        } else {
-                                            translated = if (translator.isReadyFor(
-                                                block.sourceLanguage, requestedTarget
-                                            )) translator.translate(
-                                                original.take(1500),
-                                                block.sourceLanguage, requestedTarget
-                                            ) else null
-                                            provider = if (translated != null) "ML Kit 離線"
-                                                else "未翻譯，請檢查 Azure／離線模型"
-                                        }
-                                    }
-                                    if (!translated.isNullOrBlank()) translatedCount++
-                                    result[i] = result[i].copy(
-                                        translated = translated, provider = provider
-                                    )
-                                    _snapshotLines.value = result.toList()
-                                }
-                                _snapshotStatus.value = "正在將譯文畫回照片原本的位置…"
-                                val composited = withContext(Dispatchers.Default) {
-                                    PhotoTranslationRenderer.compose(
-                                        bitmap,
-                                        selected.mapIndexedNotNull { index, element ->
-                                            val translation = result[index].translated
-                                            if (translation.isNullOrBlank()) null
-                                            else element to translation
-                                        }
-                                    )
-                                }
-                                _snapshotTranslatedPhoto.value = composited.bitmap
-                                _snapshotStatus.value = "已辨識 " + selected.size + " 段，翻譯 " +
-                                    translatedCount + " 段，照片替字 " + composited.placed +
-                                    " 段。" + if (composited.skipped > 0)
-                                        " 有 " + composited.skipped + " 段因座標或字數問題未替換，可查看文字明細。" else ""
+                                translatePhoto(bitmap)
                             } catch (e: Exception) {
                                 Log.w("CameraTranslator", "Still photo translation failed", e)
                                 _snapshotStatus.value = if (sourceLanguage == "th")
@@ -334,6 +256,111 @@ class MainViewModel @Inject constructor(
             file.delete()
             Log.w("CameraTranslator", "Unable to start photo capture", e)
             _snapshotStatus.value = "無法拍照，請重新開啟相機"
+        }
+    }
+
+    /**
+     * The only OCR/translation pipeline. Camera shutter and gallery images both
+     * pass one real still bitmap through the same full-resolution flow, then
+     * rasterize translated text at real OCR coordinates.
+     */
+    private suspend fun translatePhoto(bitmap: Bitmap) {
+        val requestedSource = sourceLanguage
+        val requestedTarget = targetLanguage
+        _snapshotOriginalPhoto.value = bitmap
+        val raw = photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
+        if (thaiOcrModels.isModelInstalled()) {
+            thaiOcrModelStatus = "已下載，可離線辨識泰文"
+        }
+        val selected = raw.filter {
+            !it.originalText.isBlank() && it.originalText.length > 1
+        }.distinctBy { it.originalText.trim() }.take(18)
+        if (selected.isEmpty()) {
+            _snapshotStatus.value = "沒有辨識到清楚文字，請靠近、避開反光再拍攝"
+            return
+        }
+        capturedSnapshotElements = selected
+        _snapshotLines.value = selected.map {
+            SnapshotTranslationLine(it.originalText.trim())
+        }
+        _snapshotStatus.value = "辨識到 " + selected.size + " 段，逐段翻譯中…"
+        val result = _snapshotLines.value.toMutableList()
+        var translatedCount = 0
+        for ((i, block) in selected.withIndex()) {
+            val original = block.originalText.trim()
+            // Product trademarks should not turn into strange
+            // Chinese transliterations on JA/ZH/TH packaging.
+            // Restrict this to short Latin-only logo-style names.
+            val brand = PhotoBrandPolicy.shouldPreserve(
+                original, block.sourceLanguage
+            )
+            val translated: String?
+            val provider: String
+            if (requestedSource == requestedTarget ||
+                brand || block.sourceLanguage == requestedTarget
+            ) {
+                translated = original
+                provider = if (brand) "品牌名稱保留原文" else "相同語言原文"
+            } else {
+                val cloud = if (shouldTryCloud())
+                    cloudTranslator.translate(
+                        original.take(1500),
+                        block.sourceLanguage, requestedTarget,
+                        cloudCredentials.load().orEmpty()
+                    ) else null
+                if (!cloud.isNullOrBlank()) {
+                    translated = cloud
+                    provider = "Azure 雲端"
+                } else {
+                    translated = if (translator.isReadyFor(
+                        block.sourceLanguage, requestedTarget
+                    )) translator.translate(
+                        original.take(1500),
+                        block.sourceLanguage, requestedTarget
+                    ) else null
+                    provider = if (translated != null) "ML Kit 離線"
+                        else "未翻譯，請檢查 Azure／離線模型"
+                }
+            }
+            if (!translated.isNullOrBlank()) translatedCount++
+            result[i] = result[i].copy(
+                translated = translated, provider = provider
+            )
+            _snapshotLines.value = result.toList()
+        }
+        _snapshotStatus.value = "正在將譯文畫回照片原本的位置…"
+        val composited = withContext(Dispatchers.Default) {
+            PhotoTranslationRenderer.compose(
+                bitmap,
+                selected.mapIndexedNotNull { index, element ->
+                    val translation = result[index].translated
+                    if (translation.isNullOrBlank()) null
+                    else element to translation
+                }
+            )
+        }
+        _snapshotTranslatedPhoto.value = composited.bitmap
+        _snapshotStatus.value = "已辨識 " + selected.size + " 段，翻譯 " +
+            translatedCount + " 段，照片替字 " + composited.placed +
+            " 段。" + if (composited.skipped > 0)
+                " 有 " + composited.skipped + " 段因座標或字數問題未替換，可查看文字明細。" else ""
+    }
+
+    /** Translate a selected gallery photo exactly as if the shutter was used. */
+    fun translateSelectedPhoto(bitmap: Bitmap) {
+        if (_snapshotStatus.value != null) return
+        isPaused = true
+        _snapshotLines.value = emptyList()
+        _snapshotOriginalPhoto.value = null
+        _snapshotTranslatedPhoto.value = null
+        _snapshotStatus.value = "正在處理相簿照片…"
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                translatePhoto(bitmap)
+            } catch (e: Exception) {
+                Log.w("CameraTranslator", "Gallery photo translation failed", e)
+                _snapshotStatus.value = "照片翻譯失敗：" + (e.message ?: "請換一張較清晰的照片")
+            }
         }
     }
 
@@ -726,21 +753,7 @@ class MainViewModel @Inject constructor(
         if (latest.isEmpty() && pending.isEmpty()) _translationEngine.value = null
     }
 
-    fun processBitmap(bitmap: Bitmap) {
-        viewModelScope.launch(Dispatchers.Default) {
-            try {
-                val selectedSource = sourceLanguage
-                val list = photoOcr.recognizeTextFromBitmap(bitmap, selectedSource)
-                withContext(Dispatchers.Main) {
-                    tracked.clear()
-                    publishDetections(list)
-                }
-            } catch (e: Exception) {
-                Log.w("CameraTranslator", "Photo OCR error", e)
-                _statusMessage.value = "圖片辨識失敗"
-            }
-        }
-    }
+    fun processBitmap(bitmap: Bitmap) = translateSelectedPhoto(bitmap)
 
     fun saveToHistory(element: TextElement) {
         viewModelScope.launch {

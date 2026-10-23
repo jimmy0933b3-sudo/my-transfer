@@ -42,6 +42,18 @@ jobs:
     - name: Run Lint
       run: ./gradlew lint
 
+    - name: Verify photo-only capture (no live OCR)
+      run: |
+        grep -q 'CameraController.IMAGE_CAPTURE' app/src/main/java/com/example/cameratranslator/camera/CameraPreview.kt
+        if grep -qE 'MlKitAnalyzer|setImageAnalysisAnalyzer|IMAGE_ANALYSIS' app/src/main/java/com/example/cameratranslator/camera/CameraPreview.kt; then
+          echo 'ERROR: Live OCR must not be enabled in photo-only mode'
+          exit 1
+        fi
+        if grep -q 'TranslationOverlay(' app/src/main/java/com/example/cameratranslator/ui/MainScreen.kt app/src/main/java/com/example/cameratranslator/ui/ImagePickerScreen.kt; then
+          echo 'ERROR: Floating translation overlays must not appear'
+          exit 1
+        fi
+
     - name: Run camera OCR unit tests
       run: ./gradlew testDebugUnitTest
 
