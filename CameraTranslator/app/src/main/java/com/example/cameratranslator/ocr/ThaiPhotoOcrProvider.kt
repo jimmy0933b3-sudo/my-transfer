@@ -92,21 +92,38 @@ class ThaiPhotoOcrProvider(private val context: Context) {
                 "泰文 OCR 模型初始化失敗"
             }
             tess.setImage(bitmap)
-            val recognized = tess.getUTF8Text().orEmpty().trim()
-            val rows = recognized.lines()
-                .map(String::trim)
-                .filter { it.isNotBlank() && PhotoOcrLanguages.containsThai(it) }
-                .distinct()
-                .take(24)
-            rows.mapIndexed { index, row ->
-                TextElement(
-                    id = "th:" + index + ":" + row.hashCode(),
-                    originalText = row,
-                    sourceLanguage = "th",
-                    boundingBox = Rect(0, 0, bitmap.width, bitmap.height),
-                    imageWidth = bitmap.width,
-                    imageHeight = bitmap.height
-                )
+            // Call OCR first, then obtain precise line rectangles from Tesseract.
+            tess.getUTF8Text()
+            val iterator = tess.getResultIterator()
+                ?: return@withContext emptyList<TextElement>()
+            try {
+                val results = mutableListOf<TextElement>()
+                val level = TessBaseAPI.PageIteratorLevel.RIL_TEXTLINE
+                iterator.begin()
+                do {
+                    val text = iterator.getUTF8Text(level)?.trim().orEmpty()
+                    val box = iterator.getBoundingRect(level)
+                    val confidence = iterator.confidence(level)
+                    if (text.isNotBlank() && PhotoOcrLanguages.containsThai(text) &&
+                        confidence >= 25f && box != null && !box.isEmpty &&
+                        box.width() < bitmap.width * 0.92f &&
+                        box.height() < bitmap.height * 0.5f
+                    ) {
+                        results.add(
+                            TextElement(
+                                id = "th:" + results.size + ":" + text.hashCode(),
+                                originalText = text,
+                                sourceLanguage = "th",
+                                boundingBox = Rect(box),
+                                imageWidth = bitmap.width,
+                                imageHeight = bitmap.height
+                            )
+                        )
+                    }
+                } while (iterator.next(level) && results.size < 24)
+                results
+            } finally {
+                iterator.delete()
             }
         } finally {
             tess.recycle()
