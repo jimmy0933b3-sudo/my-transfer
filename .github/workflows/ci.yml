@@ -127,11 +127,11 @@ jobs:
         fi
 
         # apksigner output varies slightly by version; tolerate leading
-        # whitespace and mixed-case digest labels.
+        # whitespace and both V2/V3 signer labels.
         SIGNATURE_REPORT="$("$APKSIGNER" verify --verbose --print-certs "$APK")"
         ACTUAL="$(
           printf '%s\n' "$SIGNATURE_REPORT" \
-          | sed -nE 's/^[[:space:]]*Signer #1 certificate SHA-256 digest:[[:space:]]*([[:xdigit:]:]+).*$/\1/p' \
+          | sed -nE 's/^.*certificate SHA-256 digest:[[:space:]]*([[:xdigit:]:]+).*$/\1/p' \
           | head -n 1 \
           | tr -d ':' | tr '[:upper:]' '[:lower:]'
         )"
