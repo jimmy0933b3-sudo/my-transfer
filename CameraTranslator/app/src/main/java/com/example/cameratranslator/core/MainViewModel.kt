@@ -9,6 +9,8 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.core.content.ContextCompat
 import com.example.cameratranslator.camera.SnapshotBitmapDecoder
+import com.example.cameratranslator.camera.PhotoTranslationRenderer
+import com.example.cameratranslator.camera.TranslatedPhotoSaver
 import java.io.File
 import android.graphics.Rect
 import android.os.SystemClock
@@ -115,10 +117,48 @@ class MainViewModel @Inject constructor(
     val snapshotStatus: StateFlow<String?> = _snapshotStatus.asStateFlow()
     private val _snapshotLines = MutableStateFlow<List<SnapshotTranslationLine>>(emptyList())
     val snapshotLines: StateFlow<List<SnapshotTranslationLine>> = _snapshotLines.asStateFlow()
+    private val _snapshotOriginal = MutableStateFlow<Bitmap?>(null)
+    val snapshotOriginal: StateFlow<Bitmap?> = _snapshotOriginal.asStateFlow()
+    private val _snapshotTranslated = MutableStateFlow<Bitmap?>(null)
+    val snapshotTranslated: StateFlow<Bitmap?> = _snapshotTranslated.asStateFlow()
+
+    fun saveTranslatedSnapshot(context: Context) {
+        val image = _snapshotTranslated.value ?: run {
+            _snapshotStatus.value = "譯圖尚未完成，請確認至少一段已翻譯"
+            return
+        }
+        viewModelScope.launch {
+            try {
+                _snapshotStatus.value = TranslatedPhotoSaver.save(context, image)
+            } catch (e: Exception) {
+                Log.w("CameraTranslator", "Cannot save translated photo", e)
+                _snapshotStatus.value = "無法儲存照片：" + (e.message ?: "儲存空間錯誤")
+            }
+        }
+    }
+
+    fun updateSnapshotTranslation(index: Int, newText: String) {
+        val current = _snapshotLines.value
+        val base = _snapshotOriginal.value ?: return
+        if (index !in current.indices || newText.isBlank()) return
+        _snapshotLines.value = current.toMutableList().apply {
+            set(index, get(index).copy(translated = newText.trim(), provider = "手動修正"))
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            try {
+                _snapshotTranslated.value =
+                    PhotoTranslationRenderer.render(base, _snapshotLines.value)
+            } catch (e: Exception) {
+                Log.w("CameraTranslator", "Photo text update failed", e)
+            }
+        }
+    }
 
     fun closeSnapshot() {
         _snapshotStatus.value = null
         _snapshotLines.value = emptyList()
+        _snapshotOriginal.value = null
+        _snapshotTranslated.value = null
         isPaused = false
         resetRecognitions()
     }
@@ -131,6 +171,8 @@ class MainViewModel @Inject constructor(
         }
         isPaused = true
         _snapshotLines.value = emptyList()
+        _snapshotOriginal.value = null
+        _snapshotTranslated.value = null
         _snapshotStatus.value = "正在拍攝高解析度照片…"
         val file = try {
             File.createTempFile("camera-ocr-", ".jpg", context.cacheDir)
@@ -152,11 +194,12 @@ class MainViewModel @Inject constructor(
 
                                 val bitmap = SnapshotBitmapDecoder.decode(file)
                                     ?: error("無法讀取照片")
+                                _snapshotOriginal.value = bitmap
                                 val requestedSource = sourceLanguage
                                 val requestedTarget = targetLanguage
-                                val raw = try {
-                                    photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
-                                } finally { bitmap.recycle() }
+                                // Retain the real high-resolution photographed pixels
+                                // for in-place translation overlay and gallery export.
+                                val raw = photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
                                 if (thaiOcrModels.isModelInstalled()) {
                                     thaiOcrModelStatus = "已下載，可離線辨識泰文"
                                 }
@@ -168,7 +211,11 @@ class MainViewModel @Inject constructor(
                                     return@launch
                                 }
                                 _snapshotLines.value = selected.map {
-                                    SnapshotTranslationLine(it.originalText.trim())
+                                    SnapshotTranslationLine(
+                                        original = it.originalText.trim(),
+                                        sourceLanguage = it.sourceLanguage,
+                                        bounds = it.boundingBox?.let { b -> Rect(b) }
+                                    )
                                 }
                                 _snapshotStatus.value = "辨識到 " + selected.size + " 段，逐段翻譯中…"
                                 val result = _snapshotLines.value.toMutableList()
@@ -222,8 +269,13 @@ class MainViewModel @Inject constructor(
                                     )
                                     _snapshotLines.value = result.toList()
                                 }
-                                _snapshotStatus.value = "共 " + selected.size + " 段，成功 " +
-                                    translatedCount + " 段。請比對原文及譯文。"
+                                val translatedBitmap = PhotoTranslationRenderer.render(
+                                    bitmap, result
+                                )
+                                _snapshotTranslated.value = translatedBitmap
+                                _snapshotStatus.value = "已拍照：辨識 " + selected.size +
+                                    " 段／成功翻譯 " + translatedCount +
+                                    " 段。可切換原圖／譯圖、修正錯字並存到相簿。"
                             } catch (e: Exception) {
                                 Log.w("CameraTranslator", "Still photo translation failed", e)
                                 _snapshotStatus.value = if (sourceLanguage == "th")
