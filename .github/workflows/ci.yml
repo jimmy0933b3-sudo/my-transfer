@@ -97,6 +97,9 @@ jobs:
 
     - name: Verify fixed signing fingerprint
       if: env.SIGNING_READY == 'true' && github.ref == 'refs/heads/master'
+      env:
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
       run: |
         set -euo pipefail
         APK="app/build/outputs/apk/release/app-release.apk"
@@ -105,16 +108,43 @@ jobs:
           echo "::error::apksigner or signed APK not found."
           exit 1
         fi
-        SIGNATURE_REPORT="$("$APKSIGNER" verify --verbose --print-certs "$APK")"
-        ACTUAL="$(printf '%s\n' "$SIGNATURE_REPORT" \
-          | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
-          | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+
+        # The signing certificate digest is public, not a private key or password.
+        # Compare both the keystore certificate and the actual signed APK with
+        # the pinned SHA-256 so every future CI run uses the SAME release key.
         EXPECTED="0c052c70052be200239f105daa5547e5e902e25961f357537d7f970a555ae8f3"
-        if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-          echo "::error::APK signing certificate does not match the expected fixed key."
+        KEYSTORE_CERT="$(
+          keytool -exportcert -alias "$KEY_ALIAS" \
+            -keystore app/ci-release-key.jks \
+            -storepass "$KEYSTORE_PASSWORD" \
+            | openssl x509 -inform DER -fingerprint -sha256 -noout \
+            | sed -E 's/^[^=]*=//; s/://g' \
+            | tr '[:upper:]' '[:lower:]'
+        )"
+        if [[ "$KEYSTORE_CERT" != "$EXPECTED" ]]; then
+          echo "::error::GitHub KEYSTORE_BASE64 contains a different signing key. Expected certificate SHA-256 $EXPECTED, found $KEYSTORE_CERT. Re-check the four repository Secrets."
           exit 1
         fi
-        echo "Verified fixed Release signing SHA-256: $ACTUAL"
+
+        # apksigner output varies slightly by version; tolerate leading
+        # whitespace and mixed-case digest labels.
+        SIGNATURE_REPORT="$("$APKSIGNER" verify --verbose --print-certs "$APK")"
+        ACTUAL="$(
+          printf '%s\n' "$SIGNATURE_REPORT" \
+          | sed -nE 's/^[[:space:]]*Signer #1 certificate SHA-256 digest:[[:space:]]*([[:xdigit:]:]+).*$/\1/p' \
+          | head -n 1 \
+          | tr -d ':' | tr '[:upper:]' '[:lower:]'
+        )"
+        if [[ -z "$ACTUAL" ]]; then
+          echo "::error::Could not parse apksigner certificate digest. Check apksigner --print-certs format."
+          printf '%s\n' "$SIGNATURE_REPORT" | grep -i 'certificate SHA-256 digest' || true
+          exit 1
+        fi
+        if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+          echo "::error::APK signing certificate mismatch. Expected $EXPECTED, got $ACTUAL"
+          exit 1
+        fi
+        echo "Verified fixed Release signing certificate SHA-256: $ACTUAL"
 
     - name: Upload fixed-signature Release APK
       if: env.SIGNING_READY == 'true' && github.ref == 'refs/heads/master'
