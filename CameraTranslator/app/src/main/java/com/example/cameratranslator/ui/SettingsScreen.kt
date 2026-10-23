@@ -75,7 +75,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             style = MaterialTheme.typography.bodySmall
         )
         listOf(
-            "auto" to "自動：Wi-Fi 時雲端優先，行動網路用離線",
+            "auto" to "自動：有網路就優先 Azure（含 4G/5G），無網路用離線",
             "cloud" to "雲端優先：有網路就嘗試雲端，失敗切離線",
             "offline" to "僅離線：不傳送文字到雲端"
         ).forEach { (code, label) ->
