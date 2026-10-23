@@ -24,6 +24,7 @@ import com.example.cameratranslator.core.models.TextElement
 import com.example.cameratranslator.history.HistoryDao
 import com.example.cameratranslator.history.TranslationHistory
 import com.example.cameratranslator.ocr.MLKitOcrProvider
+import com.example.cameratranslator.ocr.ThaiPhotoOcrProvider
 import com.example.cameratranslator.translation.MLKitTranslationProvider
 import com.example.cameratranslator.translation.CloudCredentialStore
 import com.example.cameratranslator.translation.CloudTranslationProvider
@@ -46,7 +47,30 @@ class MainViewModel @Inject constructor(
     application: Application,
     private val historyDao: HistoryDao
 ) : AndroidViewModel(application) {
-    private val photoOcr = MLKitOcrProvider()
+    private val photoOcr = MLKitOcrProvider(application)
+    private val thaiOcrModels = ThaiPhotoOcrProvider(application)
+    var thaiOcrModelStatus by mutableStateOf(
+        if (thaiOcrModels.isModelInstalled()) "已下載，可離線辨識泰文"
+        else "尚未下載（約 1 MB）"
+    )
+        private set
+
+    fun downloadThaiOcrModel() {
+        if (thaiOcrModels.isModelInstalled()) {
+            thaiOcrModelStatus = "已下載，可離線辨識泰文"
+            return
+        }
+        thaiOcrModelStatus = "下載中，請保持網路連線…"
+        viewModelScope.launch {
+            try {
+                thaiOcrModels.downloadModel()
+                thaiOcrModelStatus = "已下載，可離線辨識泰文"
+            } catch (e: Exception) {
+                thaiOcrModelStatus = "下載失敗，請點重試：" + (e.message ?: "網路錯誤")
+            }
+        }
+    }
+
     private val translator = MLKitTranslationProvider()
     private val cloudTranslator = CloudTranslationProvider()
     private val cloudCredentials = CloudCredentialStore(application)
@@ -122,7 +146,10 @@ class MainViewModel @Inject constructor(
                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                         viewModelScope.launch(Dispatchers.IO) {
                             try {
-                                _snapshotStatus.value = "正在辨識完整文字區塊…"
+                                _snapshotStatus.value = if (sourceLanguage == "th")
+                                    "正在準備泰文 OCR 模型並辨識照片（首次使用需網路）…"
+                                else "正在辨識完整文字區塊…"
+
                                 val bitmap = SnapshotBitmapDecoder.decode(file)
                                     ?: error("無法讀取照片")
                                 val requestedSource = sourceLanguage
@@ -130,6 +157,9 @@ class MainViewModel @Inject constructor(
                                 val raw = try {
                                     photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
                                 } finally { bitmap.recycle() }
+                                if (thaiOcrModels.isModelInstalled()) {
+                                    thaiOcrModelStatus = "已下載，可離線辨識泰文"
+                                }
                                 val selected = raw.filter {
                                     !it.originalText.isBlank() && it.originalText.length > 1
                                 }.distinctBy { it.originalText.trim() }.take(18)
@@ -145,12 +175,19 @@ class MainViewModel @Inject constructor(
                                 var translatedCount = 0
                                 for ((i, block) in selected.withIndex()) {
                                     val original = block.originalText.trim()
-                                    val brand = requestedSource == "ja" &&
-                                        original.any { it.isLetter() } &&
+                                    // Product trademarks should not turn into strange
+                                    // Chinese transliterations on JA/ZH/TH packaging.
+                                    // Restrict this to short Latin-only logo-style names.
+                                    val brand = requestedSource != "en" &&
+                                        block.sourceLanguage != "th" &&
+                                        original.length <= 50 &&
+                                        original.any { it in 'A'..'Z' } &&
                                         original.none { it in '\u3040'..'\u30ff' ||
-                                            it in '\u3400'..'\u9fff' } &&
+                                            it in '\u3400'..'\u9fff' ||
+                                            it in '\u0E00'..'\u0E7F' } &&
                                         original.all { it.isLetterOrDigit() ||
-                                            it.isWhitespace() || it in "-®©.&" }
+                                            it.isWhitespace() || it in "-®©.&" } &&
+                                        original.split(Regex("\\s+")).size <= 5
                                     val translated: String?
                                     val provider: String
                                     if (requestedSource == requestedTarget ||
@@ -189,7 +226,9 @@ class MainViewModel @Inject constructor(
                                     translatedCount + " 段。請比對原文及譯文。"
                             } catch (e: Exception) {
                                 Log.w("CameraTranslator", "Still photo translation failed", e)
-                                _snapshotStatus.value = "拍照辨識失敗：請重新拍攝並確認對焦"
+                                _snapshotStatus.value = if (sourceLanguage == "th")
+                                    "泰文 OCR 發生問題：" + (e.message ?: "請重拍或檢查模型")
+                                else "拍照辨識失敗：請重新拍攝並確認對焦"
                             } finally {
                                 file.delete()
                             }
@@ -322,7 +361,7 @@ class MainViewModel @Inject constructor(
     private var languageRevision = 0
 
     fun updateSourceLanguage(code: String) {
-        if (code !in listOf("auto", "en", "ja", "zh") || sourceLanguage == code) return
+        if (code !in listOf("auto", "en", "ja", "zh", "th") || sourceLanguage == code) return
         sourceLanguage = code
         preferences.edit().putString("source_language", code).apply()
         resetRecognitions()

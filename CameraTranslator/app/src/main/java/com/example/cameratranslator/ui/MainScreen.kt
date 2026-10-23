@@ -27,7 +27,7 @@ private val sources = listOf(
     LanguageChoice("en", "英文"),
     LanguageChoice("ja", "日文"),
     LanguageChoice("zh", "中文"),
-    LanguageChoice("th", "泰文（OCR 尚未支援）", false)
+    LanguageChoice("th", "泰文（拍照翻譯）")
 )
 
 private val targets = listOf(
@@ -98,6 +98,16 @@ fun MainScreen(
                 Toast.makeText(context, "已複製文字", Toast.LENGTH_SHORT).show()
             }
         )
+        if (viewModel.sourceLanguage == "th" && snapshotStatus == null) {
+            Text(
+                text = "泰文請按「拍照精準翻譯」，首次需下載辨識模型",
+                color = Color.White,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.align(Alignment.Center)
+                    .background(Color(0xD0183035), RoundedCornerShape(8.dp))
+                    .padding(10.dp)
+            )
+        }
         if (snapshotStatus != null) {
             Column(
                 Modifier
@@ -119,6 +129,7 @@ fun MainScreen(
                 }
                 Text(snapshotStatus.orEmpty(), color = Color.White,
                     style = MaterialTheme.typography.bodySmall)
+                Text("支援英文／日文／中文／泰文。泰文首次拍照會下載約 1 MB 模型；即時相機不支援泰文 OCR。", color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.bodySmall)
                 Text("先確認 OCR 原文是否正確；翻譯服務無法修正辨識錯字。",
                     color = Color.White.copy(alpha = 0.78f),
                     style = MaterialTheme.typography.bodySmall)
@@ -136,7 +147,14 @@ fun MainScreen(
                                 .padding(10.dp),
                             verticalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
-                            Text((i + 1).toString() + ". OCR 日文原文",
+                            val ocrLanguage = when (viewModel.sourceLanguage) {
+                                "en" -> "英文"
+                                "ja" -> "日文"
+                                "zh" -> "中文"
+                                "th" -> "泰文"
+                                else -> "自動辨識"
+                            }
+                            Text((i + 1).toString() + ". OCR " + ocrLanguage + "原文",
                                 color = Color(0xFFAACFE6),
                                 style = MaterialTheme.typography.labelMedium)
                             Text(line.original, color = Color.White,
