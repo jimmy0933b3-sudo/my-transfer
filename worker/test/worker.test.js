@@ -50,6 +50,7 @@ test("authenticated call maps locale and returns translated text", async () => {
   let passed = false;
   globalThis.fetch = async (url, options) => {
     passed = true;
+    url = new URL(url);
     assert.equal(url.searchParams.get("to"), "zh-Hant");
     assert.equal(url.searchParams.get("from"), "en");
     assert.equal(options.headers["Ocp-Apim-Subscription-Region"], "eastasia");
