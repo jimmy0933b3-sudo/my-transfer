@@ -42,6 +42,9 @@ jobs:
     - name: Run Lint
       run: ./gradlew lint
 
+    - name: Run camera OCR unit tests
+      run: ./gradlew testDebugUnitTest
+
     - name: Build Debug APK (development only)
       run: ./gradlew assembleDebug
 
