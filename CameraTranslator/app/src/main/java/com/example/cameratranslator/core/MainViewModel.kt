@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.camera.view.LifecycleCameraController
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -100,6 +101,34 @@ class MainViewModel @Inject constructor(
         private const val TEXT_CONFIRM_FRAMES = 3
     }
 
+    var sourceLanguage by mutableStateOf(preferences.getString("source_language", "auto") ?: "auto")
+        private set
+    var targetLanguage by mutableStateOf(preferences.getString("target_language", "zh") ?: "zh")
+        private set
+    private var languageRevision = 0
+
+    fun updateSourceLanguage(code: String) {
+        if (code !in listOf("auto", "en", "ja", "zh") || sourceLanguage == code) return
+        sourceLanguage = code
+        preferences.edit().putString("source_language", code).apply()
+        resetRecognitions()
+    }
+
+    fun updateTargetLanguage(code: String) {
+        if (code !in listOf("zh", "en", "ja", "th") || targetLanguage == code) return
+        targetLanguage = code
+        preferences.edit().putString("target_language", code).apply()
+        resetRecognitions()
+    }
+
+    private fun resetRecognitions() {
+        languageRevision++
+        tracked.clear()
+        _statusMessage.value = null
+        publish()
+        lastSampleMs = 0L
+    }
+
     var overlayOpacity by mutableFloatStateOf(preferences.getFloat("overlay_opacity", 0.88f))
         private set
     fun saveOverlayOpacity(value: Float) {
@@ -124,7 +153,7 @@ class MainViewModel @Inject constructor(
         text.trim().replace(Regex("\\s+"), " ").lowercase()
 
     private fun key(element: TextElement): String =
-        element.sourceLanguage + ":" + normalized(element.originalText)
+        element.sourceLanguage + ":" + targetLanguage + ":" + normalized(element.originalText)
 
     /** CameraX invokes this on the main executor. No translation or download blocks OCR. */
     fun onCameraTextElements(elements: List<TextElement>) {
@@ -188,7 +217,8 @@ class MainViewModel @Inject constructor(
             val old = tracked[id]
             if (old == null) {
                 tracked[id] = Tracked(
-                    incoming.copy(id = id, translatedText = cache[key(incoming)]), now
+                    incoming.copy(id = id, translatedText = if (incoming.sourceLanguage == targetLanguage)
+                        incoming.originalText else cache[key(incoming)]), now
                 )
                 continue
             }
@@ -203,7 +233,8 @@ class MainViewModel @Inject constructor(
                 // paragraph is translated instead of briefly clearing the card.
                 incoming.copy(
                     id = id,
-                    translatedText = cache[key(incoming)] ?: old.element.translatedText
+                    translatedText = if (incoming.sourceLanguage == targetLanguage)
+                        incoming.originalText else cache[key(incoming)] ?: old.element.translatedText
                 )
             } else {
                 old.element.copy(
@@ -234,24 +265,35 @@ class MainViewModel @Inject constructor(
         for ((_, old) in tracked) {
             val element = old.element
             val translationKey = key(element)
+            if (element.sourceLanguage == targetLanguage) {
+                if (element.translatedText != element.originalText) {
+                    val track = tracked.entries.firstOrNull { it.value === old }
+                    if (track != null) tracked[track.key] =
+                        old.copy(element = element.copy(translatedText = element.originalText))
+                }
+                continue
+            }
             val cached = cache[translationKey]
             if (!cached.isNullOrBlank()) continue
-            if (!translator.isReadyFor(element.sourceLanguage)) {
+            if (!translator.isReadyFor(element.sourceLanguage, targetLanguage)) {
                 _statusMessage.value = "離線模型尚未就緒，請到設定下載語言模型"
                 continue
             }
             if (translationKey in pending || now < (retryAfter[translationKey] ?: 0L)) continue
             pending.add(translationKey)
             _statusMessage.value = null
+            val requestedTarget = targetLanguage
+            val requestedRevision = languageRevision
             viewModelScope.launch(Dispatchers.IO) {
                 val translated = try {
-                    translator.translate(element.originalText, element.sourceLanguage, "zh")
+                    translator.translate(element.originalText, element.sourceLanguage, requestedTarget)
                 } catch (e: Exception) {
                     Log.w("CameraTranslator", "Translation failed", e)
                     null
                 }
                 withContext(Dispatchers.Main) {
                     pending.remove(translationKey)
+                    if (requestedRevision != languageRevision) return@withContext
                     if (!translated.isNullOrBlank() && translated != element.originalText) {
                         cache[translationKey] = translated
                         // A delayed result may update only the paragraph that asked
@@ -286,7 +328,8 @@ class MainViewModel @Inject constructor(
     fun processBitmap(bitmap: Bitmap) {
         viewModelScope.launch(Dispatchers.Default) {
             try {
-                val list = photoOcr.recognizeTextFromBitmap(bitmap)
+                val selectedSource = sourceLanguage
+                val list = photoOcr.recognizeTextFromBitmap(bitmap, selectedSource)
                 withContext(Dispatchers.Main) {
                     tracked.clear()
                     publishDetections(list)
