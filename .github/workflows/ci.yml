@@ -7,6 +7,9 @@ on:
     branches: [ "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -17,7 +20,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: set up JDK 17
+    - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
@@ -30,42 +33,98 @@ jobs:
     - name: Run Lint
       run: ./gradlew lint
 
-    - name: Build Debug APK
+    - name: Build Debug APK (development only)
       run: ./gradlew assembleDebug
 
-    - name: Upload Debug APK
+    - name: Upload Debug APK (not for updating installed release)
       uses: actions/upload-artifact@v4
       with:
         name: CameraTranslator-debug
         path: CameraTranslator/app/build/outputs/apk/debug/app-debug.apk
         retention-days: 30
 
-    - name: Check if Secret is set for Release
-      id: check_secret
+    # Public forks' pull requests never receive production signing credentials.
+    # A disposable test key validates the Gradle signing DSL before merging.
+    - name: Test Release signing with disposable key (PR only)
+      if: github.event_name == 'pull_request'
       run: |
-        if [ "${{ secrets.KEYSTORE_BASE64 }}" != "" ]; then
-          echo "has_secret=true" >> $GITHUB_ENV
-        else
-          echo "has_secret=false" >> $GITHUB_ENV
-        fi
+        set -euo pipefail
+        umask 077
+        keytool -genkeypair -noprompt -storetype PKCS12 \
+          -keystore app/ci-signing-test.jks -alias ci-test \
+          -keyalg RSA -keysize 2048 -validity 2 \
+          -storepass "throwaway-signing-check" -keypass "throwaway-signing-check" \
+          -dname "CN=CI Disposable Signing Test"
+        ANDROID_SIGNING_KEYSTORE_PATH="$PWD/app/ci-signing-test.jks" \
+        KEYSTORE_PASSWORD="throwaway-signing-check" \
+        KEY_ALIAS="ci-test" \
+        KEY_PASSWORD="throwaway-signing-check" \
+          ./gradlew assembleRelease
+        rm -f app/ci-signing-test.jks
+        echo "Disposable Release signing Gradle configuration verified."
 
-    - name: Decode Keystore
-      if: env.has_secret == 'true'
-      run: |
-        echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/keystore.jks
-
-    - name: Build Release APK
-      if: env.has_secret == 'true'
-      run: ./gradlew assembleRelease
+    - name: Set up fixed signing key (master only)
+      if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
       env:
+        KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$KEYSTORE_BASE64" && -z "$KEYSTORE_PASSWORD" && -z "$KEY_ALIAS" && -z "$KEY_PASSWORD" ]]; then
+          echo "Signing secrets not configured. Skipping signed Release APK."
+          echo "SIGNING_READY=false" >> "$GITHUB_ENV"
+        elif [[ -z "$KEYSTORE_BASE64" || -z "$KEYSTORE_PASSWORD" || -z "$KEY_ALIAS" || -z "$KEY_PASSWORD" ]]; then
+          echo "::error::Incomplete signing secrets. Configure all four signing secrets."
+          exit 1
+        else
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > app/ci-release-key.jks
+          keytool -list -keystore app/ci-release-key.jks \
+            -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+          echo "SIGNING_READY=true" >> "$GITHUB_ENV"
+        fi
 
-    - name: Upload Release APK
-      if: env.has_secret == 'true'
+    - name: Build fixed-key Release APK
+      if: env.SIGNING_READY == 'true' && github.ref == 'refs/heads/master'
+      env:
+        ANDROID_SIGNING_KEYSTORE_PATH: ${{ github.workspace }}/CameraTranslator/app/ci-release-key.jks
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      run: ./gradlew assembleRelease
+
+    - name: Verify fixed signing fingerprint
+      if: env.SIGNING_READY == 'true' && github.ref == 'refs/heads/master'
+      run: |
+        set -euo pipefail
+        APK="app/build/outputs/apk/release/app-release.apk"
+        APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+        if [[ ! -x "$APKSIGNER" || ! -f "$APK" ]]; then
+          echo "::error::apksigner or signed APK not found."
+          exit 1
+        fi
+        SIGNATURE_REPORT="$("$APKSIGNER" verify --verbose --print-certs "$APK")"
+        ACTUAL="$(printf '%s\n' "$SIGNATURE_REPORT" \
+          | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+          | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+        EXPECTED="0c052c70052be200239f105daa5547e5e902e25961f357537d7f970a555ae8f3"
+        if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+          echo "::error::APK signing certificate does not match the expected fixed key."
+          exit 1
+        fi
+        echo "Verified fixed Release signing SHA-256: $ACTUAL"
+
+    - name: Upload fixed-signature Release APK
+      if: env.SIGNING_READY == 'true' && github.ref == 'refs/heads/master'
       uses: actions/upload-artifact@v4
       with:
-        name: CameraTranslator-release
+        name: CameraTranslator-release-fixed-signature
         path: CameraTranslator/app/build/outputs/apk/release/app-release.apk
         retention-days: 30
+        if-no-files-found: error
+
+    - name: Remove temporary keystores
+      if: always()
+      run: rm -f app/ci-release-key.jks app/ci-signing-test.jks
