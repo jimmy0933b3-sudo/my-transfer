@@ -14,3 +14,11 @@
 .cxx
 local.properties
 /app/build/
+
+# Never commit signing keys or credential backup files
+*.jks
+*.keystore
+*.p12
+KEYSTORE_BASE64.txt
+KEYSTORE_PASSWORD.txt
+KEY_PASSWORD.txt
