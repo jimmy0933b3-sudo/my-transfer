@@ -111,7 +111,6 @@ fun MainScreen(
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
-                horizontalAlignment = Alignment.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Button(onClick = viewModel::toggleFlashlight, contentPadding = PaddingValues(horizontal = 12.dp)) {
