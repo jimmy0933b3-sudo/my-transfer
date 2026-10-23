@@ -1,6 +1,13 @@
 package com.example.cameratranslator.ui
 
 import android.widget.Toast
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import com.example.cameratranslator.core.PhotoTranslationExport
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
@@ -81,6 +88,11 @@ fun MainScreen(
     val actualEngine by viewModel.translationEngine.collectAsState()
     val snapshotStatus by viewModel.snapshotStatus.collectAsState()
     val snapshotLines by viewModel.snapshotLines.collectAsState()
+    val originalPhoto by viewModel.snapshotOriginalPhoto.collectAsState()
+    val translatedPhoto by viewModel.snapshotTranslatedPhoto.collectAsState()
+    var showCapturedOriginal by remember { mutableStateOf(false) }
+    var showPhotoDetails by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     var paused by remember { mutableStateOf(viewModel.isPaused) }
     var showOriginal by remember { mutableStateOf(viewModel.showOriginal) }
     val clipboard = LocalClipboardManager.current
@@ -107,74 +119,6 @@ fun MainScreen(
                     .background(Color(0xD0183035), RoundedCornerShape(8.dp))
                     .padding(10.dp)
             )
-        }
-        if (snapshotStatus != null) {
-            Column(
-                Modifier
-                    .align(Alignment.Center)
-                    .fillMaxSize()
-                    .padding(top = 242.dp, bottom = 16.dp, start = 10.dp, end = 10.dp)
-                    .background(Color(0xF50C2026), RoundedCornerShape(14.dp))
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(9.dp)
-            ) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("高解析度拍照翻譯", color = Color.White,
-                        style = MaterialTheme.typography.titleMedium)
-                    Button(onClick = viewModel::closeSnapshot) { Text("返回相機") }
-                }
-                Text(snapshotStatus.orEmpty(), color = Color.White,
-                    style = MaterialTheme.typography.bodySmall)
-                Text("支援英文／日文／中文／泰文。泰文首次拍照會下載約 1 MB 模型；即時相機不支援泰文 OCR。", color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.bodySmall)
-                Text("先確認 OCR 原文是否正確；翻譯服務無法修正辨識錯字。",
-                    color = Color.White.copy(alpha = 0.78f),
-                    style = MaterialTheme.typography.bodySmall)
-                Column(
-                    Modifier.fillMaxWidth()
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    snapshotLines.forEachIndexed { i, line ->
-                        Column(
-                            Modifier.fillMaxWidth()
-                                .background(Color.White.copy(alpha = 0.09f),
-                                    RoundedCornerShape(9.dp))
-                                .padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            val ocrLanguage = when (viewModel.sourceLanguage) {
-                                "en" -> "英文"
-                                "ja" -> "日文"
-                                "zh" -> "中文"
-                                "th" -> "泰文"
-                                else -> "自動辨識"
-                            }
-                            Text((i + 1).toString() + ". OCR " + ocrLanguage + "原文",
-                                color = Color(0xFFAACFE6),
-                                style = MaterialTheme.typography.labelMedium)
-                            Text(line.original, color = Color.White,
-                                style = MaterialTheme.typography.bodyMedium)
-                            Text(line.provider, color = Color(0xFF8FD5AC),
-                                style = MaterialTheme.typography.labelSmall)
-                            Text(line.translated ?: "尚未完成翻譯",
-                                color = Color.White,
-                                style = MaterialTheme.typography.bodyMedium)
-                            TextButton(
-                                enabled = !line.translated.isNullOrBlank(),
-                                onClick = {
-                                    clipboard.setText(AnnotatedString(line.translated.orEmpty()))
-                                    Toast.makeText(context, "已複製譯文", Toast.LENGTH_SHORT).show()
-                                }
-                            ) { Text("複製譯文") }
-                        }
-                    }
-                }
-            }
         }
         if (showOriginal && snapshotStatus == null) {
             Column(
@@ -305,5 +249,135 @@ fun MainScreen(
                 viewModel.showOriginal = showOriginal
             }) { Text(if (showOriginal) "返回翻譯" else "查看原文") }
         }
+        // Full-screen still photo is drawn ABOVE CameraX preview and live OCR.
+        // Text is already rendered into translatedPhoto's pixels, not placed
+        // as floating Compose rectangles.
+        if (snapshotStatus != null) {
+            val image = if (showCapturedOriginal) originalPhoto
+                else translatedPhoto ?: originalPhoto
+            Column(
+                modifier = Modifier.fillMaxSize()
+                    .background(Color(0xFF0C171A))
+                    .padding(top = 26.dp, start = 10.dp, end = 10.dp, bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("拍照翻譯成品", color = Color.White,
+                        style = MaterialTheme.typography.titleMedium)
+                    Button(onClick = {
+                        showPhotoDetails = false
+                        showCapturedOriginal = false
+                        viewModel.closeSnapshot()
+                    }) { Text("重新拍照") }
+                }
+                Text(
+                    snapshotStatus.orEmpty(),
+                    color = Color.White.copy(alpha = 0.88f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                if (image != null) {
+                    Image(
+                        bitmap = image.asImageBitmap(),
+                        contentDescription = if (showCapturedOriginal) "原始拍攝照片" else "譯文直接替換於照片原文字位置",
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        contentScale = ContentScale.Fit
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        enabled = originalPhoto != null,
+                        onClick = { showCapturedOriginal = true },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (showCapturedOriginal)
+                                Color(0xFF006D68) else Color(0xFF6854A5)
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) { Text("查看原圖") }
+                    Button(
+                        enabled = translatedPhoto != null,
+                        onClick = { showCapturedOriginal = false },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (!showCapturedOriginal)
+                                Color(0xFF006D68) else Color(0xFF6854A5)
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) { Text("查看翻譯圖") }
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        enabled = translatedPhoto != null,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            val toSave = translatedPhoto ?: return@Button
+                            scope.launch(Dispatchers.IO) {
+                                val uri = PhotoTranslationExport.saveToGallery(context, toSave)
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(
+                                        context,
+                                        if (uri != null) "已儲存翻譯照片到相簿"
+                                        else "儲存失敗（Android 9 以下請使用分享圖片）",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }
+                    ) { Text("儲存翻譯照片") }
+                    OutlinedButton(
+                        enabled = translatedPhoto != null,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            try {
+                                translatedPhoto?.let { PhotoTranslationExport.share(context, it) }
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "分享照片失敗", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    ) { Text("分享圖片", color = Color.White) }
+                }
+                TextButton(onClick = { showPhotoDetails = !showPhotoDetails }) {
+                    Text(if (showPhotoDetails) "收合 OCR 原文與譯文" else "查看各段 OCR 原文及譯文",
+                        color = Color.White)
+                }
+                if (showPhotoDetails) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth()
+                            .heightIn(max = 230.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        snapshotLines.forEachIndexed { i, line ->
+                            Column(
+                                Modifier.fillMaxWidth()
+                                    .background(Color(0xFF22363A), RoundedCornerShape(8.dp))
+                                    .padding(10.dp)
+                            ) {
+                                Text((i+1).toString() + ". 原文：" + line.original,
+                                    color = Color.White)
+                                Text(line.provider + "：" + (line.translated ?: "尚未完成"),
+                                    color = Color(0xFFB0E1CB))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
     }
 }

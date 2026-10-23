@@ -115,10 +115,16 @@ class MainViewModel @Inject constructor(
     val snapshotStatus: StateFlow<String?> = _snapshotStatus.asStateFlow()
     private val _snapshotLines = MutableStateFlow<List<SnapshotTranslationLine>>(emptyList())
     val snapshotLines: StateFlow<List<SnapshotTranslationLine>> = _snapshotLines.asStateFlow()
+    private val _snapshotOriginalPhoto = MutableStateFlow<Bitmap?>(null)
+    val snapshotOriginalPhoto: StateFlow<Bitmap?> = _snapshotOriginalPhoto.asStateFlow()
+    private val _snapshotTranslatedPhoto = MutableStateFlow<Bitmap?>(null)
+    val snapshotTranslatedPhoto: StateFlow<Bitmap?> = _snapshotTranslatedPhoto.asStateFlow()
 
     fun closeSnapshot() {
         _snapshotStatus.value = null
         _snapshotLines.value = emptyList()
+        _snapshotOriginalPhoto.value = null
+        _snapshotTranslatedPhoto.value = null
         isPaused = false
         resetRecognitions()
     }
@@ -131,6 +137,8 @@ class MainViewModel @Inject constructor(
         }
         isPaused = true
         _snapshotLines.value = emptyList()
+        _snapshotOriginalPhoto.value = null
+        _snapshotTranslatedPhoto.value = null
         _snapshotStatus.value = "正在拍攝高解析度照片…"
         val file = try {
             File.createTempFile("camera-ocr-", ".jpg", context.cacheDir)
@@ -154,9 +162,8 @@ class MainViewModel @Inject constructor(
                                     ?: error("無法讀取照片")
                                 val requestedSource = sourceLanguage
                                 val requestedTarget = targetLanguage
-                                val raw = try {
-                                    photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
-                                } finally { bitmap.recycle() }
+                                _snapshotOriginalPhoto.value = bitmap
+                                val raw = photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
                                 if (thaiOcrModels.isModelInstalled()) {
                                     thaiOcrModelStatus = "已下載，可離線辨識泰文"
                                 }
@@ -222,8 +229,22 @@ class MainViewModel @Inject constructor(
                                     )
                                     _snapshotLines.value = result.toList()
                                 }
-                                _snapshotStatus.value = "共 " + selected.size + " 段，成功 " +
-                                    translatedCount + " 段。請比對原文及譯文。"
+                                _snapshotStatus.value = "正在將譯文畫回照片原本的位置…"
+                                val composited = withContext(Dispatchers.Default) {
+                                    PhotoTranslationRenderer.compose(
+                                        bitmap,
+                                        selected.mapIndexedNotNull { index, element ->
+                                            val translation = result[index].translated
+                                            if (translation.isNullOrBlank()) null
+                                            else element to translation
+                                        }
+                                    )
+                                }
+                                _snapshotTranslatedPhoto.value = composited.bitmap
+                                _snapshotStatus.value = "已辨識 " + selected.size + " 段，翻譯 " +
+                                    translatedCount + " 段，照片替字 " + composited.placed +
+                                    " 段。" + if (composited.skipped > 0)
+                                        " 有 " + composited.skipped + " 段因座標或字數問題未替換，可查看文字明細。" else ""
                             } catch (e: Exception) {
                                 Log.w("CameraTranslator", "Still photo translation failed", e)
                                 _snapshotStatus.value = if (sourceLanguage == "th")
