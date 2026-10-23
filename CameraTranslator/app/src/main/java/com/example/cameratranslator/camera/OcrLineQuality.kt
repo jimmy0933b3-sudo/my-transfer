@@ -4,6 +4,16 @@ package com.example.cameratranslator.camera
 internal object OcrLineQuality {
     private val words = Regex("[A-Za-z]+(?:['-][A-Za-z]+)*")
 
+    fun acceptChinese(text: String): Boolean {
+        val han = text.count { it in '\u3400'..'\u9fff' }
+        val latin = text.count { it in 'a'..'z' || it in 'A'..'Z' }
+        val kana = text.count { it in '\u3040'..'\u30ff' }
+        if (han < 2 || kana > 0) return false
+        // "邦尼熊 BENI BEAR" is valid bilingual packaging. In contrast,
+        // a single guessed CJK glyph in English OCR is not reliable.
+        return han >= 3 || han.toFloat() / (han + latin).coerceAtLeast(1) >= 0.35f
+    }
+
     fun acceptEnglish(text: String): Boolean {
         val terms = words.findAll(text).map { it.value }.toList()
         val letters = terms.sumOf { term -> term.count(Char::isLetter) }
