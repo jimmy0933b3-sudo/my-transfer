@@ -27,7 +27,7 @@ private val sources = listOf(
     LanguageChoice("en", "英文"),
     LanguageChoice("ja", "日文"),
     LanguageChoice("zh", "中文"),
-    LanguageChoice("th", "泰文（拍照辨識）")
+    LanguageChoice("th", "泰文")
 )
 
 private val targets = listOf(
