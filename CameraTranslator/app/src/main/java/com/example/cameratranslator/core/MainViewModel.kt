@@ -137,6 +137,52 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    fun correctSnapshotOcr(index: Int, correctedSource: String) {
+        val current = _snapshotLines.value
+        val sourceImage = _snapshotOriginal.value ?: return
+        if (index !in current.indices || correctedSource.isBlank()) return
+        val old = current[index]
+        _snapshotLines.value = current.toMutableList().apply {
+            set(index, old.copy(
+                original = correctedSource.trim(),
+                translated = null,
+                provider = "原文已修正，正在重新翻譯"
+            ))
+        }
+        viewModelScope.launch {
+            val text = correctedSource.trim().take(1500)
+            val target = targetLanguage
+            val from = if (sourceLanguage == "auto") old.sourceLanguage else sourceLanguage
+            val output: String?
+            val engine: String
+            if (from == target) {
+                output = text
+                engine = "相同語言"
+            } else {
+                val cloud = if (shouldTryCloud()) cloudTranslator.translate(
+                    text, from, target, cloudCredentials.load().orEmpty()
+                ) else null
+                if (!cloud.isNullOrBlank()) {
+                    output = cloud
+                    engine = "Azure 雲端"
+                } else {
+                    output = if (translator.isReadyFor(from, target)) {
+                        translator.translate(text, from, target)
+                    } else null
+                    engine = if (!output.isNullOrBlank()) "ML Kit 離線" else "未取得翻譯"
+                }
+            }
+            val latest = _snapshotLines.value.toMutableList()
+            if (index in latest.indices && latest[index].original == correctedSource.trim()) {
+                latest[index] = latest[index].copy(translated = output, provider = engine)
+                _snapshotLines.value = latest
+                _snapshotTranslated.value = withContext(Dispatchers.Default) {
+                    PhotoTranslationRenderer.render(sourceImage, latest)
+                }
+            }
+        }
+    }
+
     fun updateSnapshotTranslation(index: Int, newText: String) {
         val current = _snapshotLines.value
         val base = _snapshotOriginal.value ?: return
