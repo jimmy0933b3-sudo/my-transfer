@@ -64,10 +64,17 @@ class MainViewModel @Inject constructor(
         thaiOcrModelStatus = "下載中，請保持網路連線…"
         viewModelScope.launch {
             try {
-                thaiOcrModels.downloadModel()
-                thaiOcrModelStatus = "已下載，可離線辨識泰文"
+                thaiOcrModels.downloadModel { percent ->
+                    viewModelScope.launch(Dispatchers.Main.immediate) {
+                        if (percent < 100) {
+                            thaiOcrModelStatus = "下載中：" + percent + "%（中斷可續傳）"
+                        }
+                    }
+                }
+                thaiOcrModelStatus = "已下載且校驗成功，可離線辨識泰文"
             } catch (e: Exception) {
-                thaiOcrModelStatus = "下載失敗，請點重試：" + (e.message ?: "網路錯誤")
+                thaiOcrModelStatus = "下載失敗，可點重試續傳：" +
+                    (e.message ?: "請檢查網路")
             }
         }
     }
