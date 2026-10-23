@@ -6,6 +6,8 @@ data class TextElement(
     val id: String,
     val originalText: String,
     val translatedText: String? = null,
+    /** Actual provider that returned this translation. OCR-only has no provider. */
+    val translationEngine: String? = null,
     val boundingBox: Rect?,
     val sourceLanguage: String = "en",
     val imageWidth: Int = 0,
