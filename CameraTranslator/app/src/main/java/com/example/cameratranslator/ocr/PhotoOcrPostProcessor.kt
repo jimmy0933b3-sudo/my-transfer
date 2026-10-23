@@ -69,7 +69,8 @@ internal object PhotoOcrPostProcessor {
     }
 
     private fun clean(text: String, language: String): String =
-        if (language == "en") repairLatinOZero(text) else text
+        if (language == "en") repairLatinOZero(text).replace(Regex("\\s+"), " ").trim()
+        else text
 
     private fun canMerge(a: Segment, b: Segment): Boolean {
         if (a.language != b.language || a.width <= 0 || b.width <= 0 ||
