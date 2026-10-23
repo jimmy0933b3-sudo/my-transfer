@@ -133,10 +133,14 @@ internal object PhotoTranslationRenderer {
         val height = rect.height()
         if (width <= 0 || height <= 0) return
         val pixels = IntArray(width * height)
-        val l = (rect.left - 3).coerceIn(0, original.width - 1)
-        val r = (rect.right + 2).coerceIn(0, original.width - 1)
-        val t = (rect.top - 3).coerceIn(0, original.height - 1)
-        val b = (rect.bottom + 2).coerceIn(0, original.height - 1)
+        // OCR bounds hug the glyphs. Sampling only 2-3px outside often
+        // picks up the dark ink/outline and creates a muddy gray rectangle.
+        // Sample farther into the label's actual surrounding background.
+        val margin = (min(width, height) * 0.085f).toInt().coerceIn(4, 24)
+        val l = (rect.left - margin).coerceIn(0, original.width - 1)
+        val r = (rect.right + margin).coerceIn(0, original.width - 1)
+        val t = (rect.top - margin).coerceIn(0, original.height - 1)
+        val b = (rect.bottom + margin).coerceIn(0, original.height - 1)
         for (y in 0 until height) {
             val fy = y.toFloat() / height.coerceAtLeast(1)
             val left = original.getPixel(l, rect.top + y)
