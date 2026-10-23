@@ -37,8 +37,10 @@ fun TranslationOverlay(
         val screenWidth = with(density) { maxWidth.toPx() }
         val screenHeight = with(density) { maxHeight.toPx() }
         val margin = with(density) { 8.dp.toPx() }
+        val safeTop = with(density) { 76.dp.toPx() }
+        val safeBottom = screenHeight - with(density) { 88.dp.toPx() }
         val minCard = with(density) { 155.dp.toPx() }
-        val maxCard = with(density) { 292.dp.toPx() }
+        val maxCard = with(density) { 310.dp.toPx() }
         val linePixels = with(density) { 23.sp.toPx() }
         val used = mutableListOf<RectF>()
 
@@ -66,12 +68,15 @@ fun TranslationOverlay(
                 min(maxCard, max(minCard, rect.width() + with(density) { 28.dp.toPx() })))
             if (cardWidth <= 0f) return@forEach
             val x = rect.left.coerceIn(margin, max(margin, screenWidth - margin - cardWidth))
-            val charactersPerRow = max(8, (cardWidth / with(density) { 12.dp.toPx() }).toInt())
+            // Chinese glyphs are close to one full em; underestimating their width
+            // caused actual cards to collide with the next translated paragraph.
+            val glyphWidth = with(density) { 18.sp.toPx() }
+            val charactersPerRow = max(5, ((cardWidth - with(density) { 20.dp.toPx() }) / glyphWidth).toInt())
             val rows = text.split('\n').sumOf {
                 max(1, (it.length + charactersPerRow - 1) / charactersPerRow)
             }
-            val cardHeight = with(density) { 15.dp.toPx() } + min(5, rows) * linePixels
-            var y = rect.top.coerceIn(margin, max(margin, screenHeight - margin - cardHeight))
+            val cardHeight = with(density) { 15.dp.toPx() } + min(6, rows) * linePixels
+            var y = rect.top.coerceIn(safeTop, max(safeTop, safeBottom - margin - cardHeight))
 
             repeat(used.size) {
                 val collision = used.firstOrNull {
@@ -79,7 +84,7 @@ fun TranslationOverlay(
                 }
                 if (collision != null) {
                     y = (collision.bottom + margin)
-                        .coerceAtMost(max(margin, screenHeight - margin - cardHeight))
+                        .coerceAtMost(max(safeTop, safeBottom - margin - cardHeight))
                 }
             }
             used.add(RectF(x, y, x + cardWidth, y + cardHeight))
@@ -97,7 +102,7 @@ fun TranslationOverlay(
                     color = Color.White,
                     fontSize = 18.sp,
                     lineHeight = 23.sp,
-                    maxLines = 5,
+                    maxLines = 6,
                     overflow = TextOverflow.Ellipsis
                 )
             }
