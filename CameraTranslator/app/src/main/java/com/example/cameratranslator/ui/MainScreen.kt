@@ -2,6 +2,9 @@ package com.example.cameratranslator.ui
 
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -93,6 +96,46 @@ fun MainScreen(
                 Toast.makeText(context, "已複製文字", Toast.LENGTH_SHORT).show()
             }
         )
+        if (showOriginal) {
+            Column(
+                Modifier.align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, bottom = 88.dp)
+                    .heightIn(max = 345.dp)
+                    .background(Color(0xF018303C), RoundedCornerShape(12.dp))
+                    .verticalScroll(rememberScrollState())
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "原文 OCR（未經翻譯）",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    "請對準清晰文字；按「暫停」後點句子即可複製。",
+                    color = Color.White.copy(alpha = 0.8f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                if (textElements.isEmpty()) {
+                    Text("辨識中，請保持鏡頭穩定。", color = Color.White)
+                }
+                textElements.sortedBy { it.boundingBox?.top ?: Int.MAX_VALUE }.forEach { element ->
+                    Text(
+                        text = element.originalText,
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.fillMaxWidth()
+                            .background(Color.White.copy(alpha = 0.11f), RoundedCornerShape(6.dp))
+                            .clickable(enabled = paused) {
+                                clipboard.setText(AnnotatedString(element.originalText))
+                                Toast.makeText(context, "已複製原文", Toast.LENGTH_SHORT).show()
+                            }
+                            .padding(8.dp)
+                    )
+                }
+            }
+        }
         Column(
             Modifier.align(Alignment.TopCenter)
                 .fillMaxWidth()
@@ -169,7 +212,7 @@ fun MainScreen(
             Button(onClick = {
                 showOriginal = !showOriginal
                 viewModel.showOriginal = showOriginal
-            }) { Text(if (showOriginal) "翻譯" else "原文") }
+            }) { Text(if (showOriginal) "返回翻譯" else "查看原文") }
         }
     }
 }
