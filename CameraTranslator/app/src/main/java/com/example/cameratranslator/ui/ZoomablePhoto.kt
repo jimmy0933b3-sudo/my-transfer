@@ -94,16 +94,6 @@ internal fun ZoomablePhoto(
                 translationY = pan.y
             }
         )
-        Text(
-            "雙指縮放 · 拖曳移動 · 雙擊放大／還原",
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 6.dp)
-                .background(Color.Black.copy(alpha = 0.62f), RoundedCornerShape(8.dp))
-                .padding(horizontal = 10.dp, vertical = 5.dp)
-        )
         if (zoom > 1.01f) {
             TextButton(
                 onClick = {
