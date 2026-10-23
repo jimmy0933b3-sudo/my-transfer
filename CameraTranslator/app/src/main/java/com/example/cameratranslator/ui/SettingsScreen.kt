@@ -140,7 +140,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
 
             Panel {
                 Heading("01  /  SECURITY", "App 密鑰與連線",
-                    "使用 Cloudflare Worker 轉接 Azure，只傳 OCR 文字，不上傳照片。")
+                    "Azure 翻譯只傳文字；若啟用 PP-OCRv5 雲端辨識，照片將經 Cloudflare 傳到你的 OCR 伺服器。")
                 val title = when {
                     !hasKey -> "尚未加入 App 密鑰"
                     isVerified -> "已儲存，且 Azure 連線成功"
@@ -282,7 +282,38 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             }
 
             Panel {
-                Heading("03  /  THAI OCR", "泰文拍照辨識",
+                Heading("03  /  PADDLEOCR", "拍照 OCR 優先引擎",
+                    "PP-OCRv5 負責辨識文字位置，Azure 負責翻譯。照片替字與相簿儲存已支援。")
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("優先使用 PP-OCRv5 雲端辨識",
+                            color = Ink, fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold)
+                        Text("英文／中文／日文／泰文；失敗自動改用手機 OCR。",
+                            color = Muted, fontSize = 12.sp)
+                    }
+                    Switch(
+                        checked = viewModel.preferPaddleOcr,
+                        onCheckedChange = viewModel::setPaddleOcrPreference,
+                        colors = SwitchDefaults.colors(checkedTrackColor = Teal)
+                    )
+                }
+                Text("注意：啟用後，雲端模式拍照時會上傳壓縮後的整張照片至你自行部署的 PP-OCRv5 服務。" +
+                    "若選「僅離線」，絕對不傳送照片。PP-OCRv5 需要額外的運算主機，可能收費。" +
+                    "未在 Cloudflare 設定上游時，會標示 ML Kit／Tesseract 本機備援。",
+                    color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+                StatusPill("最近拍照 OCR：" + viewModel.actualPhotoOcrEngine,
+                    success = viewModel.actualPhotoOcrEngine.startsWith("PaddleOCR"))
+                Text("後端部署完成後，在 Worker 設定 PADDLE_OCR_UPSTREAM_URL、" +
+                    "PADDLE_OCR_UPSTREAM_TOKEN；不必把 Paddle 金鑰寫進 APK。",
+                    color = Muted, fontSize = 11.sp)
+            }
+
+            Panel {
+                Heading("04  /  THAI OCR", "泰文拍照辨識",
                     "英文、中文和日文辨識已內建；泰文需要額外下載約 1 MB 模型。")
                 val thaiStatus = viewModel.thaiOcrModelStatus
                 val isReady = thaiStatus.startsWith("已下載")

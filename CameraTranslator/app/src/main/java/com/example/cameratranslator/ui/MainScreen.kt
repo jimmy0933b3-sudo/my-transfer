@@ -285,10 +285,12 @@ fun MainScreen(
                         Text("照片翻譯", fontWeight = FontWeight.SemiBold,
                             color = Color.White, fontSize = 17.sp)
                         Text(
-                            if (translatedPhoto != null) "翻譯已完成"
-                            else if (originalPhoto != null) "正在處理照片"
+                            if (translatedPhoto != null)
+                                viewModel.actualPhotoOcrEngine + " · 翻譯完成"
+                            else if (originalPhoto != null)
+                                viewModel.actualPhotoOcrEngine
                             else "拍攝中",
-                            color = Mint, fontSize = 11.sp
+                            color = Mint, fontSize = 11.sp, maxLines = 2
                         )
                     }
                     TextButton(onClick = {

@@ -49,10 +49,88 @@ export default {
       return reply({
         ok: true,
         service: "camera-translator-api",
+        paddleOcrConfigured: Boolean(env.PADDLE_OCR_UPSTREAM_URL &&
+          env.PADDLE_OCR_UPSTREAM_TOKEN && env.PADDLE_OCR_UPSTREAM_TOKEN.length >= 32),
         configured: Boolean(env.AZURE_TRANSLATOR_KEY &&
           env.AZURE_TRANSLATOR_REGION &&
           env.APP_ACCESS_TOKEN && env.APP_ACCESS_TOKEN.length >= 32)
       });
+    }
+    // PP-OCRv5 inference requires a separate Python/CPU/GPU service. This
+    // Worker authenticates the app and proxies the image without saving it.
+    if (url.pathname === "/ocr") {
+      if (request.method !== "POST") return reply({error:"Method not allowed"},405);
+      if (!env.APP_ACCESS_TOKEN || env.APP_ACCESS_TOKEN.length < 32 ||
+          !env.PADDLE_OCR_UPSTREAM_URL ||
+          !env.PADDLE_OCR_UPSTREAM_TOKEN ||
+          env.PADDLE_OCR_UPSTREAM_TOKEN.length < 32) {
+        return reply({error:"PaddleOCR upstream not configured"},503);
+      }
+      const supplied = request.headers.get("authorization") || "";
+      const token = supplied.startsWith("Bearer ") ? supplied.slice(7) : "";
+      if (!equalsConstantTime(token, env.APP_ACCESS_TOKEN)) {
+        return reply({error:"Unauthorized"},401);
+      }
+      if (request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase()
+        !== "application/json") return reply({error:"JSON required"},415);
+      let endpoint;
+      try {
+        endpoint = new URL(env.PADDLE_OCR_UPSTREAM_URL);
+        if (endpoint.protocol !== "https:" || endpoint.username ||
+            endpoint.password || endpoint.pathname !== "/ocr") throw Error("unsafe");
+      } catch {
+        return reply({error:"Invalid OCR service configuration"},503);
+      }
+      const declared = Number(request.headers.get("content-length") || 0);
+      if (declared > 3_500_000) return reply({error:"Image too large"},413);
+      const raw = await request.text();
+      if (raw.length > 3_500_000) return reply({error:"Image too large"},413);
+      let payload;
+      try { payload = JSON.parse(raw); } catch { return reply({error:"Invalid JSON"},400); }
+      if (!["auto","en","ja","zh","th"].includes(payload?.language) ||
+          typeof payload?.image_base64 !== "string" ||
+          payload.image_base64.length < 100 ||
+          payload.image_base64.length > 3_400_000 ||
+          !/^[A-Za-z0-9+/]+={0,2}$/.test(payload.image_base64)) {
+        return reply({error:"Invalid OCR image or language"},400);
+      }
+      const ip = request.headers.get("cf-connecting-ip") || "unknown";
+      if (!checkRateLimit(ip)) return reply({error:"Too many requests"},429);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30_000);
+      try {
+        const upstream = await fetch(endpoint.href, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + env.PADDLE_OCR_UPSTREAM_TOKEN
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        });
+        if (!upstream.ok) {
+          return reply({error:"PaddleOCR is unavailable"}, upstream.status===429?429:502);
+        }
+        const result = await upstream.json();
+        if (result?.engine !== "PP-OCRv5" || !Array.isArray(result.blocks) ||
+            !Number.isInteger(result.width) || !Number.isInteger(result.height) ||
+            result.width < 1 || result.height < 1) {
+          return reply({error:"Invalid upstream OCR response"},502);
+        }
+        const blocks = result.blocks.slice(0,45).filter(b =>
+          typeof b.text === "string" && b.text.length <= 1500 &&
+          ["en","ja","zh","th"].includes(b.language) &&
+          Number.isFinite(b.score) &&
+          Array.isArray(b.box) && b.box.length === 4 &&
+          b.box.every(Number.isFinite)
+        );
+        return reply({engine:"PP-OCRv5",width:result.width,
+          height:result.height,blocks});
+      } catch {
+        return reply({error:"PaddleOCR timeout or connection error"},504);
+      } finally {
+        clearTimeout(timeout);
+      }
     }
     if (url.pathname !== "/translate") return reply({ error: "Not found" }, 404);
     if (request.method !== "POST") return reply({ error: "Method not allowed" }, 405);
