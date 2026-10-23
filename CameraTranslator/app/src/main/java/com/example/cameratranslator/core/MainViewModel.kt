@@ -361,7 +361,7 @@ class MainViewModel @Inject constructor(
     private var languageRevision = 0
 
     fun updateSourceLanguage(code: String) {
-        if (code !in listOf("auto", "en", "ja", "zh") || sourceLanguage == code) return
+        if (code !in listOf("auto", "en", "ja", "zh", "th") || sourceLanguage == code) return
         sourceLanguage = code
         preferences.edit().putString("source_language", code).apply()
         resetRecognitions()
