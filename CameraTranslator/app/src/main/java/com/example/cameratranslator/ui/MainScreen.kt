@@ -286,7 +286,7 @@ fun MainScreen(
                             color = Color.White, fontSize = 17.sp)
                         Text(
                             if (translatedPhoto != null)
-                                viewModel.actualPhotoOcrEngine + " · Azure 優先"
+                                viewModel.actualPhotoOcrEngine + " · 翻譯完成"
                             else if (originalPhoto != null)
                                 viewModel.actualPhotoOcrEngine
                             else "拍攝中",
