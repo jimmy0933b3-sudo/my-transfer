@@ -48,6 +48,7 @@ class MainViewModel @Inject constructor(
     private val historyDao: HistoryDao
 ) : AndroidViewModel(application) {
     private val photoOcr = MLKitOcrProvider(application)
+    private val photoGlossary = PhotoTranslationMemory(application)
     private val thaiOcrModels = ThaiPhotoOcrProvider(application)
     var thaiOcrModelStatus by mutableStateOf(
         if (thaiOcrModels.isModelInstalled()) "已下載，可離線辨識泰文"
@@ -145,15 +146,21 @@ class MainViewModel @Inject constructor(
             if (manualTranslation != null && original == previous.original &&
                 manualTranslation.isNotBlank()) {
                 translation = manualTranslation.trim()
-                provider = "手動修正譯文"
+                photoGlossary.remember(original, source, targetLanguage, translation)
+                provider = "手動校正（下次同詞自動套用）"
             } else if (source == targetLanguage) {
                 translation = original
                 provider = "相同語言原文"
             } else {
-                val cloud = if (shouldTryCloud()) cloudTranslator.translate(
-                    original, source, targetLanguage, cloudCredentials.load().orEmpty()
-                ) else null
-                if (!cloud.isNullOrBlank()) {
+                val corrected = photoGlossary.lookup(original, source, targetLanguage)
+                val cloud = if (corrected == null && shouldTryCloud())
+                    cloudTranslator.translate(
+                        original, source, targetLanguage, cloudCredentials.load().orEmpty()
+                    ) else null
+                if (corrected != null) {
+                    translation = corrected
+                    provider = "詞彙校正"
+                } else if (!cloud.isNullOrBlank()) {
                     translation = cloud
                     provider = "Azure 雲端（校正後）"
                 } else {
@@ -302,13 +309,19 @@ class MainViewModel @Inject constructor(
                 translated = original
                 provider = if (brand) "品牌名稱保留原文" else "相同語言原文"
             } else {
-                val cloud = if (shouldTryCloud())
+                val corrected = photoGlossary.lookup(
+                    original, block.sourceLanguage, requestedTarget
+                )
+                val cloud = if (corrected == null && shouldTryCloud())
                     cloudTranslator.translate(
                         original.take(1500),
                         block.sourceLanguage, requestedTarget,
                         cloudCredentials.load().orEmpty()
                     ) else null
-                if (!cloud.isNullOrBlank()) {
+                if (corrected != null) {
+                    translated = corrected
+                    provider = "詞彙校正（本機）"
+                } else if (!cloud.isNullOrBlank()) {
                     translated = cloud
                     provider = "Azure 雲端"
                 } else {
