@@ -24,7 +24,6 @@ class ThaiPhotoOcrProvider(private val context: Context) {
                 "87416418657359cb625c412a48b6e1d6d41c29bd/tha.traineddata"
         private const val MIN_MODEL_BYTES = 300_000L
         private const val MAX_MODEL_BYTES = 8_000_000L
-        private val thaiCharacters = Regex("[\u0E00-\u0E7F]")
     }
 
     private fun modelDirectory() = File(context.filesDir, "tesseract/tessdata")
@@ -96,7 +95,7 @@ class ThaiPhotoOcrProvider(private val context: Context) {
             val recognized = tess.getUTF8Text().orEmpty().trim()
             val rows = recognized.lines()
                 .map(String::trim)
-                .filter { it.isNotBlank() && thaiCharacters.containsMatchIn(it) }
+                .filter { it.isNotBlank() && PhotoOcrLanguages.containsThai(it) }
                 .distinct()
                 .take(24)
             rows.mapIndexed { index, row ->
