@@ -5,6 +5,11 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.graphics.Bitmap
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.core.content.ContextCompat
+import com.example.cameratranslator.camera.SnapshotBitmapDecoder
+import java.io.File
 import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
@@ -81,6 +86,128 @@ class MainViewModel @Inject constructor(
         }
     }
 
+
+    private val _snapshotStatus = MutableStateFlow<String?>(null)
+    val snapshotStatus: StateFlow<String?> = _snapshotStatus.asStateFlow()
+    private val _snapshotLines = MutableStateFlow<List<SnapshotTranslationLine>>(emptyList())
+    val snapshotLines: StateFlow<List<SnapshotTranslationLine>> = _snapshotLines.asStateFlow()
+
+    fun closeSnapshot() {
+        _snapshotStatus.value = null
+        _snapshotLines.value = emptyList()
+        isPaused = false
+        resetRecognitions()
+    }
+
+    fun captureSnapshot(context: Context) {
+        if (_snapshotStatus.value != null) return
+        val camera = cameraController ?: run {
+            _statusMessage.value = "相機尚未準備好，請重新開啟"
+            return
+        }
+        isPaused = true
+        _snapshotLines.value = emptyList()
+        _snapshotStatus.value = "正在拍攝高解析度照片…"
+        val file = try {
+            File.createTempFile("camera-ocr-", ".jpg", context.cacheDir)
+        } catch (_: Exception) {
+            _snapshotStatus.value = "無法建立暫存照片，請檢查儲存空間"
+            return
+        }
+
+        try {
+            val options = ImageCapture.OutputFileOptions.Builder(file).build()
+            camera.takePicture(options, ContextCompat.getMainExecutor(context),
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                        viewModelScope.launch(Dispatchers.IO) {
+                            try {
+                                _snapshotStatus.value = "正在辨識完整文字區塊…"
+                                val bitmap = SnapshotBitmapDecoder.decode(file)
+                                    ?: error("無法讀取照片")
+                                val requestedSource = sourceLanguage
+                                val requestedTarget = targetLanguage
+                                val raw = try {
+                                    photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
+                                } finally { bitmap.recycle() }
+                                val selected = raw.filter {
+                                    !it.originalText.isBlank() && it.originalText.length > 1
+                                }.distinctBy { it.originalText.trim() }.take(18)
+                                if (selected.isEmpty()) {
+                                    _snapshotStatus.value = "沒有辨識到清楚文字，請靠近、避開反光再拍攝"
+                                    return@launch
+                                }
+                                _snapshotLines.value = selected.map {
+                                    SnapshotTranslationLine(it.originalText.trim())
+                                }
+                                _snapshotStatus.value = "辨識到 " + selected.size + " 段，逐段翻譯中…"
+                                val result = _snapshotLines.value.toMutableList()
+                                var translatedCount = 0
+                                for ((i, block) in selected.withIndex()) {
+                                    val original = block.originalText.trim()
+                                    val brand = requestedSource == "ja" &&
+                                        original.any { it.isLetter() } &&
+                                        original.none { it in '\u3040'..'\u30ff' ||
+                                            it in '\u3400'..'\u9fff' } &&
+                                        original.all { it.isLetterOrDigit() ||
+                                            it.isWhitespace() || it in "-®©.&" }
+                                    val translated: String?
+                                    val provider: String
+                                    if (requestedSource == requestedTarget ||
+                                        brand || block.sourceLanguage == requestedTarget
+                                    ) {
+                                        translated = original
+                                        provider = if (brand) "品牌名稱保留原文" else "相同語言原文"
+                                    } else {
+                                        val cloud = if (shouldTryCloud())
+                                            cloudTranslator.translate(
+                                                original.take(1500),
+                                                block.sourceLanguage, requestedTarget,
+                                                cloudCredentials.load().orEmpty()
+                                            ) else null
+                                        if (!cloud.isNullOrBlank()) {
+                                            translated = cloud
+                                            provider = "Azure 雲端"
+                                        } else {
+                                            translated = if (translator.isReadyFor(
+                                                block.sourceLanguage, requestedTarget
+                                            )) translator.translate(
+                                                original.take(1500),
+                                                block.sourceLanguage, requestedTarget
+                                            ) else null
+                                            provider = if (translated != null) "ML Kit 離線"
+                                                else "未翻譯，請檢查 Azure／離線模型"
+                                        }
+                                    }
+                                    if (!translated.isNullOrBlank()) translatedCount++
+                                    result[i] = result[i].copy(
+                                        translated = translated, provider = provider
+                                    )
+                                    _snapshotLines.value = result.toList()
+                                }
+                                _snapshotStatus.value = "共 " + selected.size + " 段，成功 " +
+                                    translatedCount + " 段。請比對原文及譯文。"
+                            } catch (e: Exception) {
+                                Log.w("CameraTranslator", "Still photo translation failed", e)
+                                _snapshotStatus.value = "拍照辨識失敗：請重新拍攝並確認對焦"
+                            } finally {
+                                file.delete()
+                            }
+                        }
+                    }
+                    override fun onError(exception: ImageCaptureException) {
+                        file.delete()
+                        Log.w("CameraTranslator", "Camera photo capture error", exception)
+                        _snapshotStatus.value = "拍照失敗：請稍後重新拍攝"
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            file.delete()
+            Log.w("CameraTranslator", "Unable to start photo capture", e)
+            _snapshotStatus.value = "無法拍照，請重新開啟相機"
+        }
+    }
 
     private val _textElements = MutableStateFlow<List<TextElement>>(emptyList())
     val textElements: StateFlow<List<TextElement>> = _textElements.asStateFlow()
