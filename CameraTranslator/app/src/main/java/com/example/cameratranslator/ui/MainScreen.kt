@@ -187,7 +187,7 @@ fun MainScreen(
                             Modifier.fillMaxWidth()
                                 .background(Color.White.copy(alpha = 0.10f),
                                     RoundedCornerShape(7.dp))
-                                .clickable(enabled = !line.translated.isNullOrBlank()) {
+                                .clickable {
                                     editingLine = index
                                     correctedText = line.translated.orEmpty()
                                     correctedOriginal = line.original
@@ -291,7 +291,7 @@ fun MainScreen(
                 }
             }
         }
-        Column(
+        if (snapshotStatus == null) Column(
             Modifier.align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .background(Color.Black.copy(alpha = 0.38f))
