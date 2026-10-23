@@ -56,10 +56,13 @@ class MLKitTranslationProvider : TranslationProvider {
         statusFlow.update { it + (language to ModelStatus(state, detail)) }
     }
 
-    fun isReadyFor(sourceLanguage: String): Boolean {
+    fun isReadyFor(sourceLanguage: String, targetLanguage: String = "zh"): Boolean {
         val source = code(sourceLanguage) ?: return false
+        val target = code(targetLanguage) ?: return false
+        // OCR-only requests do not need any translation model.
+        if (source == target) return true
         return modelStatuses.value[source]?.state == ModelState.READY &&
-            modelStatuses.value["zh"]?.state == ModelState.READY
+            modelStatuses.value[target]?.state == ModelState.READY
     }
 
     suspend fun refreshModelStatuses() {
@@ -126,7 +129,8 @@ class MLKitTranslationProvider : TranslationProvider {
         if (text.isBlank()) return null
         val source = code(sourceLanguage) ?: return null
         val target = code(targetLanguage) ?: return null
-        if (source == target || !isReadyFor(source)) return null
+        if (source == target) return text
+        if (!isReadyFor(source, target)) return null
 
         try {
             val client = translatorLock.withLock {
