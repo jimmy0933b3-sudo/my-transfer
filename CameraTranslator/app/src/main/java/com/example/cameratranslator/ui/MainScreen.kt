@@ -27,7 +27,7 @@ private val sources = listOf(
     LanguageChoice("en", "英文"),
     LanguageChoice("ja", "日文"),
     LanguageChoice("zh", "中文"),
-    LanguageChoice("th", "泰文（OCR 尚未支援）", false)
+    LanguageChoice("th", "泰文（拍照辨識）")
 )
 
 private val targets = listOf(
@@ -119,7 +119,7 @@ fun MainScreen(
                 }
                 Text(snapshotStatus.orEmpty(), color = Color.White,
                     style = MaterialTheme.typography.bodySmall)
-                Text("先確認 OCR 原文是否正確；翻譯服務無法修正辨識錯字。",
+                Text("支援英文／日文／中文／泰文（泰文先到設定下載 OCR 模型）。請先確認 OCR 原文。",
                     color = Color.White.copy(alpha = 0.78f),
                     style = MaterialTheme.typography.bodySmall)
                 Column(
@@ -136,7 +136,10 @@ fun MainScreen(
                                 .padding(10.dp),
                             verticalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
-                            Text((i + 1).toString() + ". OCR 日文原文",
+                            Text((i + 1).toString() + ". OCR " +
+                                    com.example.cameratranslator.core.SnapshotTextPolicy.displayLanguage(
+                                        line.sourceLanguage
+                                    ) + "原文",
                                 color = Color(0xFFAACFE6),
                                 style = MaterialTheme.typography.labelMedium)
                             Text(line.original, color = Color.White,
@@ -244,7 +247,18 @@ fun MainScreen(
                 style = MaterialTheme.typography.labelSmall
             )
         }
-        if (status != null && !paused && snapshotStatus == null) {
+        if (viewModel.sourceLanguage == "th" && snapshotStatus == null) {
+            Text(
+                "泰文請按「拍照翻譯」；先在設定下載泰文 OCR 模型。",
+                color = Color.White,
+                modifier = Modifier.align(Alignment.TopCenter)
+                    .padding(top = 150.dp, start = 18.dp, end = 18.dp)
+                    .background(Color(0xD0102026), RoundedCornerShape(8.dp))
+                    .padding(8.dp)
+            )
+        }
+        if (status != null && !paused && snapshotStatus == null &&
+            viewModel.sourceLanguage != "th") {
             Text(
                 status.orEmpty(),
                 color = Color.White,
@@ -269,7 +283,7 @@ fun MainScreen(
             Button(
                 onClick = { viewModel.captureSnapshot(context) },
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 94.dp)
-            ) { Text("拍照精準翻譯") }
+            ) { Text("拍照翻譯（多語言）") }
         }
         if (snapshotStatus == null) Row(
             Modifier.align(Alignment.BottomCenter)
