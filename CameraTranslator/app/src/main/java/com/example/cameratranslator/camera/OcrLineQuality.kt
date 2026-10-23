@@ -7,13 +7,13 @@ internal object OcrLineQuality {
     fun acceptEnglish(text: String): Boolean {
         val terms = words.findAll(text).map { it.value }.toList()
         val letters = terms.sumOf { term -> term.count(Char::isLetter) }
-        if (terms.size < 2 || letters < 6) return false
+        if (terms.size < 2 || letters < 5) return false
 
         // Brand names such as "BENI BEAR", "Oral B" and "Beni Bear" are
         // genuine labels, not garbage merely because they have <13 letters.
         val allCaps = terms.all { term -> term.all { it.isUpperCase() } }
         val titleCase = terms.all { term -> term.first().isUpperCase() }
-        if ((allCaps && letters >= 6) || (titleCase && letters >= 8)) return true
+        if ((allCaps && letters >= 6) || (titleCase && letters >= 5)) return true
 
         // Short labels ending in a product number are also useful.
         if (text.any(Char::isDigit) && letters >= 6) return true
