@@ -410,19 +410,31 @@ class MainViewModel @Inject constructor(
         private set
     var cloudTestStatus by mutableStateOf("尚未測試")
         private set
+    // A saved secret is NOT equivalent to a successful Worker/Azure test.
+    // Verification resets after process restart or when the token changes.
+    var cloudConnectionState by mutableStateOf(
+        if (cloudCredentials.load() != null) "saved" else "missing"
+    )
+        private set
 
     /** Explicit diagnostic call. Does not fall back to ML Kit or fake success. */
     fun testCloudConnection() {
         if (!cloudTokenConfigured) {
+            cloudConnectionState = "missing"
             cloudTestStatus = "請先儲存 APP_ACCESS_TOKEN"
             return
         }
+        if (cloudConnectionState == "testing") return
+        cloudConnectionState = "testing"
         cloudTestStatus = "連線測試中…"
         viewModelScope.launch {
             val result = cloudTranslator.translate(
                 "Hello world", "en", "zh", cloudCredentials.load().orEmpty()
             )
-            cloudTestStatus = if (!result.isNullOrBlank() && result != "Hello world")
+            if (!cloudTokenConfigured) return@launch
+            cloudConnectionState = if (!result.isNullOrBlank() && result != "Hello world")
+                "verified" else "failed"
+            cloudTestStatus = if (cloudConnectionState == "verified")
                 "Azure 雲端測試成功：$result"
             else "雲端測試失敗：請檢查 Worker /health、APP_ACCESS_TOKEN 與 Azure 免費額度"
         }
@@ -441,6 +453,7 @@ class MainViewModel @Inject constructor(
         val saved = cloudCredentials.save(token)
         if (saved) {
             cloudTokenConfigured = true
+            cloudConnectionState = "saved"
             cloudTestStatus = "密鑰已保存，請按「測試雲端」驗證"
             cache.clear()
             cacheEngine.clear()
@@ -452,6 +465,7 @@ class MainViewModel @Inject constructor(
     fun clearCloudToken() {
         cloudCredentials.clear()
         cloudTokenConfigured = false
+        cloudConnectionState = "missing"
         cloudTestStatus = "已清除 App 密鑰"
         cache.clear()
         cacheEngine.clear()
