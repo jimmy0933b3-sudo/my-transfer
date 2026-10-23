@@ -119,10 +119,84 @@ class MainViewModel @Inject constructor(
     val snapshotOriginalPhoto: StateFlow<Bitmap?> = _snapshotOriginalPhoto.asStateFlow()
     private val _snapshotTranslatedPhoto = MutableStateFlow<Bitmap?>(null)
     val snapshotTranslatedPhoto: StateFlow<Bitmap?> = _snapshotTranslatedPhoto.asStateFlow()
+    private var capturedSnapshotElements: List<TextElement> = emptyList()
+
+    /**
+     * When stylized writing or reflection is read incorrectly, a user can
+     * correct the OCR text and request a fresh translation. Recompose the
+     * REAL frozen photograph with the existing OCR pixel rectangles.
+     */
+    fun correctSnapshotOcr(index: Int, corrected: String, manualTranslation: String? = null) {
+        val image = _snapshotOriginalPhoto.value ?: return
+        val lines = _snapshotLines.value
+        if (index !in lines.indices || index !in capturedSnapshotElements.indices) return
+        val original = corrected.trim()
+        if (original.isBlank() || original.length > 1500) {
+            _snapshotStatus.value = "請輸入 1～1500 字的正確原文"
+            return
+        }
+        val previous = lines[index]
+        _snapshotStatus.value = "修正第 " + (index + 1) + " 段，更新照片中…"
+        viewModelScope.launch {
+            val old = capturedSnapshotElements[index]
+            val source = old.sourceLanguage
+            val translation: String?
+            val provider: String
+            if (manualTranslation != null && original == previous.original &&
+                manualTranslation.isNotBlank()) {
+                translation = manualTranslation.trim()
+                provider = "手動修正譯文"
+            } else if (source == targetLanguage) {
+                translation = original
+                provider = "相同語言原文"
+            } else {
+                val cloud = if (shouldTryCloud()) cloudTranslator.translate(
+                    original, source, targetLanguage, cloudCredentials.load().orEmpty()
+                ) else null
+                if (!cloud.isNullOrBlank()) {
+                    translation = cloud
+                    provider = "Azure 雲端（校正後）"
+                } else {
+                    val local = if (translator.isReadyFor(source, targetLanguage)) {
+                        translator.translate(original, source, targetLanguage)
+                    } else null
+                    translation = local
+                    provider = if (!local.isNullOrBlank()) "ML Kit 離線（校正後）"
+                        else "無法翻譯，請檢查 Azure 或模型"
+                }
+            }
+            val current = _snapshotLines.value.toMutableList()
+            if (index !in current.indices || _snapshotOriginalPhoto.value !== image) return@launch
+            current[index] = current[index].copy(
+                original = original, translated = translation, provider = provider
+            )
+            capturedSnapshotElements = capturedSnapshotElements.toMutableList().apply {
+                set(index, old.copy(originalText = original))
+            }
+            _snapshotLines.value = current
+            val composed = withContext(Dispatchers.Default) {
+                PhotoTranslationRenderer.compose(
+                    image,
+                    capturedSnapshotElements.mapIndexedNotNull { i, element ->
+                        current.getOrNull(i)?.translated?.takeIf(String::isNotBlank)?.let {
+                            element to it
+                        }
+                    }
+                )
+            }
+            if (_snapshotOriginalPhoto.value !== image) return@launch
+            _snapshotTranslatedPhoto.value = composed.bitmap
+            _snapshotStatus.value = "已更新 OCR 與翻譯照片，成功替字 " +
+                composed.placed + " 段，可儲存或分享。"
+        }
+    }
+
 
     fun closeSnapshot() {
+        capturedSnapshotElements = emptyList()
         _snapshotStatus.value = null
         _snapshotLines.value = emptyList()
+        capturedSnapshotElements = emptyList()
         _snapshotOriginalPhoto.value = null
         _snapshotTranslatedPhoto.value = null
         isPaused = false
@@ -174,6 +248,7 @@ class MainViewModel @Inject constructor(
                                     _snapshotStatus.value = "沒有辨識到清楚文字，請靠近、避開反光再拍攝"
                                     return@launch
                                 }
+                                capturedSnapshotElements = selected
                                 _snapshotLines.value = selected.map {
                                     SnapshotTranslationLine(it.originalText.trim())
                                 }
