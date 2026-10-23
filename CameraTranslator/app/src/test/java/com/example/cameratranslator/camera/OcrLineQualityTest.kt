@@ -25,6 +25,14 @@ class OcrLineQualityTest {
         assertTrue(OcrLineQuality.acceptEnglish("BENI BEAR 300"))
     }
 
+    @Test fun chineseAndBilingualPackagingIsRecognized() {
+        assertTrue(OcrLineQuality.acceptChinese("邦尼熊"))
+        assertTrue(OcrLineQuality.acceptChinese("抽取式面紙300抽"))
+        assertTrue(OcrLineQuality.acceptChinese("邦尼熊 BENI BEAR"))
+        assertFalse(OcrLineQuality.acceptChinese("熊 BENI BEAR"))
+        assertFalse(OcrLineQuality.acceptChinese("BENI BEAR"))
+    }
+
     @Test fun partialFrameGarbageIsRejected() {
         assertFalse(OcrLineQuality.acceptEnglish("can"))
         assertFalse(OcrLineQuality.acceptEnglish("PM"))
