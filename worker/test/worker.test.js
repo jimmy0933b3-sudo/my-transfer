@@ -80,3 +80,66 @@ test("invalid and oversized requests are rejected before Azure", async () => {
     assert.equal(calls, 0);
   } finally { globalThis.fetch = original; }
 });
+
+
+test("PaddleOCR refuses requests when upstream has not been deployed", async () => {
+  const image_base64 = Buffer.from("test-image".repeat(20)).toString("base64");
+  const res = await worker.fetch(req("/ocr", env.APP_ACCESS_TOKEN,
+    {language:"ja",image_base64}), env);
+  assert.equal(res.status, 503);
+  assert.equal((await res.json()).error, "PaddleOCR upstream not configured");
+});
+
+test("PaddleOCR rejects bad app token before forwarding any photo", async () => {
+  const image_base64 = Buffer.from("test-image".repeat(20)).toString("base64");
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; throw Error("Must not forward"); };
+  try {
+    const res = await worker.fetch(req("/ocr", "incorrect",
+      {language:"ja",image_base64}), {...env,
+        PADDLE_OCR_UPSTREAM_URL:"https://ocr.example.com/ocr",
+        PADDLE_OCR_UPSTREAM_TOKEN:"service-secret-123456789012345678901234"
+      });
+    assert.equal(res.status, 401);
+    assert.equal(calls, 0);
+  } finally { globalThis.fetch = original; }
+});
+
+test("PP-OCRv5 forwards image to private upstream and returns bounds", async () => {
+  const image_base64 = Buffer.from("test-image".repeat(20)).toString("base64");
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (url, opts) => {
+    calls++;
+    assert.equal(url, "https://ocr.example.com/ocr");
+    assert.equal(opts.headers.Authorization, "Bearer service-secret-123456789012345678901234");
+    assert.equal(JSON.parse(opts.body).language, "ja");
+    return Response.json({engine:"PP-OCRv5",width:1000,height:750,blocks:[
+      {text:"こんにちは",box:[50,60,300,105],language:"ja",score:0.99}
+    ]});
+  };
+  try {
+    const res = await worker.fetch(req("/ocr", env.APP_ACCESS_TOKEN,
+      {language:"ja",image_base64}), {...env,
+        PADDLE_OCR_UPSTREAM_URL:"https://ocr.example.com/ocr",
+        PADDLE_OCR_UPSTREAM_TOKEN:"service-secret-123456789012345678901234"
+      });
+    assert.equal(res.status, 200);
+    const result = await res.json();
+    assert.equal(result.engine,"PP-OCRv5");
+    assert.deepEqual(result.blocks[0].box,[50,60,300,105]);
+    assert.equal(calls,1);
+  } finally { globalThis.fetch = original; }
+});
+
+test("OCR health exposes configuration boolean not secrets", async () => {
+  const res = await worker.fetch(
+    new Request("https://camera-translator-api.jimmy0933.workers.dev/health"),
+    {...env,PADDLE_OCR_UPSTREAM_URL:"https://ocr.example.com/ocr",
+      PADDLE_OCR_UPSTREAM_TOKEN:"private-test-paddle-service-token-987654321"}
+  );
+  const body=await res.json();
+  assert.equal(body.paddleOcrConfigured,true);
+  assert.equal(JSON.stringify(body).includes("private-test-paddle"),false);
+});
