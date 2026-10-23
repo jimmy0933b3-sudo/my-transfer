@@ -260,16 +260,9 @@ class MainViewModel @Inject constructor(
                                     // Product trademarks should not turn into strange
                                     // Chinese transliterations on JA/ZH/TH packaging.
                                     // Restrict this to short Latin-only logo-style names.
-                                    val brand = requestedSource != "en" &&
-                                        block.sourceLanguage != "th" &&
-                                        original.length <= 50 &&
-                                        original.any { it in 'A'..'Z' } &&
-                                        original.none { it in '\u3040'..'\u30ff' ||
-                                            it in '\u3400'..'\u9fff' ||
-                                            it in '\u0E00'..'\u0E7F' } &&
-                                        original.all { it.isLetterOrDigit() ||
-                                            it.isWhitespace() || it in "-®©.&" } &&
-                                        original.split(Regex("\\s+")).size <= 5
+                                    val brand = PhotoBrandPolicy.shouldPreserve(
+                                        original, block.sourceLanguage
+                                    )
                                     val translated: String?
                                     val provider: String
                                     if (requestedSource == requestedTarget ||

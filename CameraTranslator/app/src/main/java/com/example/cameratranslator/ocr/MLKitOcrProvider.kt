@@ -51,10 +51,12 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
 
     suspend fun recognizeTextFromBitmap(bitmap: Bitmap, selectedSource: String): List<TextElement> {
         require(PhotoOcrLanguages.supported(selectedSource)) { "Unsupported photo OCR language" }
-        if (selectedSource == "th") return thai.recognize(bitmap)
-        val mlKit = extract(InputImage.fromBitmap(bitmap, 0), selectedSource).map {
-            it.copy(imageWidth = bitmap.width, imageHeight = bitmap.height)
-        }
+        if (selectedSource == "th") return mergePhotoParagraphs(thai.recognize(bitmap))
+        val mlKit = mergePhotoParagraphs(
+            extract(InputImage.fromBitmap(bitmap, 0), selectedSource).map {
+                it.copy(imageWidth = bitmap.width, imageHeight = bitmap.height)
+            }
+        )
         // Auto remains fast and works without network. Thai recognition joins
         // only after its model has already been downloaded during manual Thai use.
         if (selectedSource != "auto" || !thai.isModelInstalled()) return mlKit
@@ -63,7 +65,38 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
         } catch (_: Exception) {
             emptyList()
         }
-        return (thaiLines + mlKit).distinctBy { it.sourceLanguage + ":" + it.originalText }.take(32)
+        return mergePhotoParagraphs(
+            (thaiLines + mlKit).distinctBy { it.sourceLanguage + ":" + it.originalText }
+        ).take(32)
+    }
+
+    /**
+     * Photo OCR text blocks are visual blocks, not grammatical sentences.
+     * Postprocess only captured photos: keep original per-block coordinates
+     * for correct image replacement while joining closely stacked fragments.
+     */
+    private fun mergePhotoParagraphs(elements: List<TextElement>): List<TextElement> {
+        if (elements.isEmpty()) return elements
+        val segments = elements.mapIndexedNotNull { index, element ->
+            val rect = element.boundingBox ?: return@mapIndexedNotNull null
+            PhotoOcrPostProcessor.Segment(
+                text = element.originalText,
+                language = element.sourceLanguage,
+                left = rect.left,
+                top = rect.top,
+                right = rect.right,
+                bottom = rect.bottom,
+                originalIndices = listOf(index)
+            )
+        }
+        return PhotoOcrPostProcessor.combine(segments).map { segment ->
+            val original = elements[segment.originalIndices.first()]
+            original.copy(
+                id = segment.originalIndices.joinToString(prefix = "photo:", separator = "+"),
+                originalText = segment.text,
+                boundingBox = Rect(segment.left, segment.top, segment.right, segment.bottom)
+            )
+        }
     }
 
     private suspend fun extract(input: InputImage, selectedSource: String = "auto"): List<TextElement> {
