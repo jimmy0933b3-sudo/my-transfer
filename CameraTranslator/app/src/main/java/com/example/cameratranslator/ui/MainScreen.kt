@@ -27,7 +27,7 @@ private val sources = listOf(
     LanguageChoice("en", "英文"),
     LanguageChoice("ja", "日文"),
     LanguageChoice("zh", "中文"),
-    LanguageChoice("th", "泰文（OCR 尚未支援）", false)
+    LanguageChoice("th", "泰文（拍照翻譯）")
 )
 
 private val targets = listOf(
@@ -98,6 +98,16 @@ fun MainScreen(
                 Toast.makeText(context, "已複製文字", Toast.LENGTH_SHORT).show()
             }
         )
+        if (viewModel.sourceLanguage == "th" && snapshotStatus == null) {
+            Text(
+                text = "泰文請按「拍照精準翻譯」，首次需下載辨識模型",
+                color = Color.White,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.align(Alignment.Center)
+                    .background(Color(0xD0183035), RoundedCornerShape(8.dp))
+                    .padding(10.dp)
+            )
+        }
         if (snapshotStatus != null) {
             Column(
                 Modifier
