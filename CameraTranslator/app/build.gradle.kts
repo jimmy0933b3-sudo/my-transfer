@@ -5,6 +5,9 @@ plugins {
     id("com.google.dagger.hilt.android")
 }
 
+// Only configure release signing when CI has supplied its secure keystore.
+val ciKeystorePath = System.getenv("ANDROID_SIGNING_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+
 android {
     namespace = "com.example.cameratranslator"
     compileSdk = 34
@@ -13,11 +16,22 @@ android {
         applicationId = "com.example.cameratranslator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.4.0"
+        versionCode = 6
+        versionName = "1.4.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+        }
+    }
+
+    signingConfigs {
+        if (ciKeystorePath != null) {
+            create("ciRelease") {
+                storeFile = file(ciKeystorePath)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
         }
     }
 
@@ -25,6 +39,9 @@ android {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (ciKeystorePath != null) {
+                signingConfig = signingConfigs.getByName("ciRelease")
+            }
         }
     }
     compileOptions {
