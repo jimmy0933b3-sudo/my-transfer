@@ -45,6 +45,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     var accessToken by remember { mutableStateOf("") }
     var tokenFeedback by remember { mutableStateOf("") }
     val statuses by viewModel.modelStatuses.collectAsState()
+    val thaiOcrStatus by viewModel.thaiOcrStatus.collectAsState()
     val languages = listOf(
         "zh" to "繁體中文",
         "en" to "英文",
@@ -137,7 +138,21 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             style = MaterialTheme.typography.bodySmall
         )
         HorizontalDivider()
-        Text("離線語言模型", style = MaterialTheme.typography.titleLarge)
+        Text("泰文字形 OCR 模型（拍照辨識）", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "英文、中文、日文使用內建 ML Kit OCR；泰文使用 Tesseract 專用模型。" +
+                "下載後可離線辨識泰文圖片，翻譯仍依你選的雲端／離線模式。",
+            style = MaterialTheme.typography.bodySmall
+        )
+        Text(thaiOcrStatus, style = MaterialTheme.typography.bodyMedium)
+        OutlinedButton(
+            onClick = viewModel::downloadThaiOcrModel,
+            enabled = !thaiOcrStatus.startsWith("正在下載")
+        ) {
+            Text(if (viewModel.thaiOcrInstalled) "已安裝泰文 OCR" else "下載／重新下載泰文 OCR（約 1 MB）")
+        }
+        HorizontalDivider()
+        Text("離線翻譯語言模型", style = MaterialTheme.typography.titleLarge)
         Text(
             "請下載所選來源與目標的語言模型；兩者相同時只做 OCR，不需要下載翻譯模型。",
             style = MaterialTheme.typography.bodyMedium
