@@ -82,6 +82,8 @@ class ThaiPhotoOcrProvider(private val context: Context) {
         }
     }
 
+    suspend fun downloadModel() = withContext(Dispatchers.IO) { ensureModel() }
+
     suspend fun recognize(bitmap: Bitmap): List<TextElement> = withContext(Dispatchers.IO) {
         ensureModel()
         val tess = TessBaseAPI()
