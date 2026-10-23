@@ -68,8 +68,9 @@ internal object PhotoTranslationRenderer {
                 skipped++
                 continue
             }
-            // Erase the original ink and draw localized replacement.
-            canvas.drawRect(rect, Paint().apply { color = pixelColor })
+            // Interpolate pixels from all four borders instead of painting
+            // a visibly solid background rectangle over product artwork.
+            eraseTextRegion(output, original, rect)
             val overallHeight = chosenLines.size * lineSpacing
             val startY = rect.top + (rect.height() - overallHeight) / 2f +
                 fontSize * 0.89f
@@ -117,6 +118,44 @@ internal object PhotoTranslationRenderer {
         val g = points.map(Color::green).sorted()[points.size / 2]
         val b = points.map(Color::blue).sorted()[points.size / 2]
         return Color.rgb(r, g, b)
+    }
+
+    /**
+     * Lightweight 4-edge background reconstruction. Different from ML/AI
+     * inpainting, but smoother for gradients and package backgrounds than
+     * a plain grey/black OCR box.
+     */
+    private fun eraseTextRegion(target: Bitmap, original: Bitmap, rect: Rect) {
+        val width = rect.width()
+        val height = rect.height()
+        if (width <= 0 || height <= 0) return
+        val pixels = IntArray(width * height)
+        val l = (rect.left - 3).coerceIn(0, original.width - 1)
+        val r = (rect.right + 2).coerceIn(0, original.width - 1)
+        val t = (rect.top - 3).coerceIn(0, original.height - 1)
+        val b = (rect.bottom + 2).coerceIn(0, original.height - 1)
+        for (y in 0 until height) {
+            val fy = y.toFloat() / height.coerceAtLeast(1)
+            val left = original.getPixel(l, rect.top + y)
+            val right = original.getPixel(r, rect.top + y)
+            for (x in 0 until width) {
+                val fx = x.toFloat() / width.coerceAtLeast(1)
+                val top = original.getPixel(rect.left + x, t)
+                val bottom = original.getPixel(rect.left + x, b)
+                val vertical = blend(top, bottom, fy)
+                val horizontal = blend(left, right, fx)
+                pixels[y * width + x] = blend(vertical, horizontal, 0.5f)
+            }
+        }
+        target.setPixels(pixels, 0, width, rect.left, rect.top, width, height)
+    }
+
+    private fun blend(a: Int, b: Int, ratio: Float): Int {
+        val t = ratio.coerceIn(0f, 1f)
+        val r = (Color.red(a) * (1 - t) + Color.red(b) * t).toInt().coerceIn(0, 255)
+        val g = (Color.green(a) * (1 - t) + Color.green(b) * t).toInt().coerceIn(0, 255)
+        val bl = (Color.blue(a) * (1 - t) + Color.blue(b) * t).toInt().coerceIn(0, 255)
+        return Color.rgb(r, g, bl)
     }
 
     private fun luma(c: Int): Float =
