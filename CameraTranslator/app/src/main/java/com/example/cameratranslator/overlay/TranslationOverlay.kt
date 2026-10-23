@@ -2,6 +2,7 @@ package com.example.cameratranslator.overlay
 
 import android.graphics.RectF
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,16 +29,16 @@ import kotlin.math.roundToInt
 fun TranslationOverlay(
     textElements: List<TextElement>,
     showOriginal: Boolean,
-    opacity: Float = 0.88f
+    paused: Boolean,
+    opacity: Float = 0.88f,
+    onCopy: (String) -> Unit = {}
 ) {
-    // In original-text mode, do not cover the camera image with repeated OCR labels.
-    if (showOriginal) return
     val density = LocalDensity.current
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val screenWidth = with(density) { maxWidth.toPx() }
         val screenHeight = with(density) { maxHeight.toPx() }
         val margin = with(density) { 8.dp.toPx() }
-        val safeTop = with(density) { 76.dp.toPx() }
+        val safeTop = with(density) { 142.dp.toPx() }
         val safeBottom = screenHeight - with(density) { 88.dp.toPx() }
         val minCard = with(density) { 155.dp.toPx() }
         val maxCard = with(density) { 310.dp.toPx() }
@@ -46,7 +47,8 @@ fun TranslationOverlay(
 
         textElements.sortedBy { it.boundingBox?.top ?: Int.MAX_VALUE }.forEach { element ->
             val box = element.boundingBox ?: return@forEach
-            val text = element.translatedText?.trim().orEmpty()
+            val text = (if (showOriginal) element.originalText else element.translatedText
+                ?: if (paused) element.originalText else "").trim()
             if (text.isEmpty()) return@forEach
 
             val rect = if (element.isViewCoordinates) {
@@ -95,6 +97,7 @@ fun TranslationOverlay(
                     .width(with(density) { cardWidth.toDp() })
                     .heightIn(min = 38.dp)
                     .background(Color(0xFF10262B).copy(alpha = opacity), RoundedCornerShape(8.dp))
+                    .clickable(enabled = paused) { onCopy(text) }
                     .padding(horizontal = 10.dp, vertical = 7.dp)
             ) {
                 Text(
