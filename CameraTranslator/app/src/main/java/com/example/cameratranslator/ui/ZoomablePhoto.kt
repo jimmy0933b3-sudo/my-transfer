@@ -27,7 +27,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
@@ -51,30 +50,10 @@ internal fun ZoomablePhoto(
 ) {
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
-    var viewport by remember { mutableStateOf(IntSize.Zero) }
-
-    fun clampPan(candidate: Offset, scale: Float): Offset {
-        val w = viewport.width.toFloat()
-        val h = viewport.height.toFloat()
-        if (w <= 0f || h <= 0f || bitmap.width <= 0 || bitmap.height <= 0) return Offset.Zero
-        // ContentScale.Fit means the unzoomed photo may be letterboxed.
-        // Clamp using the actual fitted PHOTO, not the outer layout box.
-        val fit = min(w / bitmap.width, h / bitmap.height)
-        val displayedW = bitmap.width * fit * scale
-        val displayedH = bitmap.height * fit * scale
-        val limitX = max(0f, (displayedW - w) / 2f)
-        val limitY = max(0f, (displayedH - h) / 2f)
-        return Offset(
-            candidate.x.coerceIn(-limitX, limitX),
-            candidate.y.coerceIn(-limitY, limitY)
-        )
-    }
-
     Box(
         modifier = modifier
             .clipToBounds()
             .background(Color(0xFF101819))
-            .onSizeChanged { viewport = it }
             .pointerInput(bitmap) {
                 detectTransformGestures(panZoomLock = true) { centroid, drag, gestureZoom, _ ->
                     val oldZoom = zoom
@@ -83,7 +62,7 @@ internal fun ZoomablePhoto(
                     val center = Offset(size.width / 2f, size.height / 2f)
                     val nextPan = pan * ratio + (centroid - center) * (1f - ratio) + drag
                     zoom = newZoom
-                    pan = clampPan(nextPan, newZoom)
+                    pan = constrainPhotoPan(nextPan, newZoom, size, bitmap)
                 }
             }
             .pointerInput(bitmap) {
@@ -94,10 +73,10 @@ internal fun ZoomablePhoto(
                     } else {
                         val targetZoom = 2.5f
                         val center = Offset(size.width / 2f, size.height / 2f)
-                        pan = clampPan(
+                        pan = constrainPhotoPan(
                             pan * (targetZoom / zoom) +
                                 (location - center) * (1f - targetZoom / zoom),
-                            targetZoom
+                            targetZoom, size, bitmap
                         )
                         zoom = targetZoom
                     }
@@ -139,4 +118,27 @@ internal fun ZoomablePhoto(
             }
         }
     }
+}
+
+/** Pan only as far as the actual fitted bitmap extends beyond the viewport. */
+private fun constrainPhotoPan(
+    candidate: Offset,
+    zoom: Float,
+    viewport: IntSize,
+    bitmap: Bitmap
+): Offset {
+    val w = viewport.width.toFloat()
+    val h = viewport.height.toFloat()
+    if (w <= 0f || h <= 0f || bitmap.width <= 0 || bitmap.height <= 0) {
+        return Offset.Zero
+    }
+    val fit = min(w / bitmap.width, h / bitmap.height)
+    val renderedWidth = bitmap.width * fit * zoom
+    val renderedHeight = bitmap.height * fit * zoom
+    val limitX = max(0f, (renderedWidth - w) / 2f)
+    val limitY = max(0f, (renderedHeight - h) / 2f)
+    return Offset(
+        candidate.x.coerceIn(-limitX, limitX),
+        candidate.y.coerceIn(-limitY, limitY)
+    )
 }
