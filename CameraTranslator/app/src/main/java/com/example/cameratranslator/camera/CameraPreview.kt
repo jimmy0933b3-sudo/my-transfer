@@ -35,6 +35,7 @@ fun CameraPreviewScreen(viewModel: MainViewModel) {
     val controller = remember(context) {
         LifecycleCameraController(context).apply {
             imageAnalysisBackpressureStrategy = ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
+            setEnabledUseCases(CameraController.IMAGE_ANALYSIS or CameraController.IMAGE_CAPTURE)
         }
     }
     val preview = remember(context) {
@@ -90,7 +91,12 @@ fun CameraPreviewScreen(viewModel: MainViewModel) {
                         // fragments on an overwhelmingly Latin page.
                         mergeLines(en, emptyList(), ja)
                     } else mergeLines(en, zh, ja)
-                    viewModel.onCameraTextElements(groupParagraphs(chosen))
+                    // Japanese text blocks should retain sentence context and
+                    // punctuation. Re-grouping individual Japanese lines caused
+                    // broken phrases and nonsensical Azure translations.
+                    viewModel.onCameraTextElements(
+                        if (selectedSource == "ja") chosen else groupParagraphs(chosen)
+                    )
                 }
             }
         )
@@ -123,13 +129,26 @@ private val latinCharacters = Regex("[A-Za-z]")
  * candidates from the Chinese recognizer require a much stronger Han signal.
  */
 private fun extractLines(result: Text, selectedSource: String, script: String): List<TextElement> =
-    result.textBlocks.flatMap { it.lines }.mapNotNull { line ->
-        val value = line.text.trim().replace(Regex("\\s+"), " ")
-        val box = line.boundingBox ?: return@mapNotNull null
+    (if (script == "ja") {
+        result.textBlocks.mapNotNull { block ->
+            block.boundingBox?.let { box -> block.text.trim() to box }
+        }
+    } else {
+        result.textBlocks.flatMap { block ->
+            block.lines.mapNotNull { line ->
+                line.boundingBox?.let { box -> line.text.trim() to box }
+            }
+        }
+    }).mapNotNull { (raw, box) ->
+        val value = if (script == "ja") raw else raw.replace(Regex("\\s+"), " ")
         if (box.isEmpty || value.length < 2 || value.none { it.isLetter() }) return@mapNotNull null
         val kana = kanaCharacters.findAll(value).count()
         val han = hanCharacters.findAll(value).count()
         val latin = latinCharacters.findAll(value).count()
+        // Latin-only product logos on Japanese packaging are often proper
+        // names, e.g. TAKARA TOMY. Do not send them to JA→ZH translation,
+        // which can turn the brand into nonsensical Chinese words.
+        if (script == "ja" && kana == 0 && han == 0) return@mapNotNull null
         // Do not translate isolated words and partial line fragments on busy
         // pages: OCR may change these every frame and spam Azure/overlays.
         if (value.count { it.isLetter() } < 3) return@mapNotNull null

@@ -16,8 +16,8 @@ android {
         applicationId = "com.example.cameratranslator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 10
-        versionName = "1.5.3"
+        versionCode = 11
+        versionName = "1.5.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
@@ -73,6 +73,8 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
 
     // CameraX
     val camerax_version = "1.3.1"
