@@ -40,7 +40,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     var opacity by remember { mutableFloatStateOf(viewModel.overlayOpacity) }
     val statuses by viewModel.modelStatuses.collectAsState()
     val languages = listOf(
-        "zh" to "繁體中文（翻譯目標）",
+        "zh" to "繁體中文",
         "en" to "英文",
         "ja" to "日文",
         "th" to "泰文"
@@ -57,6 +57,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     ) {
         TextButton(onClick = onBack) { Text("← 返回相機") }
         Text("翻譯設定", style = MaterialTheme.typography.headlineMedium)
+        Text("相機上方可手動選來源與目標語系。暫停後點文字框即可複製；原文按鈕可顯示 OCR 結果。")
 
         Text("翻譯框不透明度：" + (opacity * 100).toInt() + "%")
         Slider(value = opacity, onValueChange = { opacity = it }, valueRange = 0.35f..1f)
@@ -64,7 +65,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         HorizontalDivider()
         Text("離線語言模型", style = MaterialTheme.typography.titleLarge)
         Text(
-            "先下載「繁體中文」及需要翻譯的來源語言。下載完成後即可離線翻譯。",
+            "請下載所選來源與目標的語言模型；兩者相同時只做 OCR，不需要下載翻譯模型。",
             style = MaterialTheme.typography.bodyMedium
         )
 
@@ -133,6 +134,14 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         )
         Text(
             "注意：泰文翻譯模型可下載，但泰文相機文字辨識仍需要另外完成 OCR 支援。",
+            style = MaterialTheme.typography.bodySmall
+        )
+        HorizontalDivider()
+        Text("翻譯品質", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "目前仍使用 ML Kit 離線翻譯，適合短句。長段文字、專有名詞與低品質 OCR 可能翻錯。" +
+                "若需要高品質線上翻譯，未來可使用 Google Cloud Translation 或 AI 翻譯服務；" +
+                "目前尚未接入付費雲端服務，也不會將 API 金鑰放入 APK。",
             style = MaterialTheme.typography.bodySmall
         )
         Spacer(Modifier.height(12.dp))
