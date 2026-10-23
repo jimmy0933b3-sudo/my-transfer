@@ -1,9 +1,6 @@
 package com.example.cameratranslator.ui
 
 import android.widget.Toast
-import androidx.compose.foundation.Image
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -96,7 +93,6 @@ fun MainScreen(
     var editOcrText by remember { mutableStateOf("") }
     var editTranslationText by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
-    var paused by remember { mutableStateOf(viewModel.isPaused) }
     var showOriginal by remember { mutableStateOf(viewModel.showOriginal) }
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
@@ -106,7 +102,7 @@ fun MainScreen(
         TranslationOverlay(
             textElements = textElements,
             showOriginal = showOriginal,
-            paused = paused,
+            paused = false,
             opacity = viewModel.overlayOpacity,
             onCopy = { selectedText ->
                 clipboard.setText(AnnotatedString(selectedText))
@@ -140,7 +136,7 @@ fun MainScreen(
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(
-                    "請對準清晰文字；按「暫停」後點句子即可複製。",
+                    "請對準清晰文字；點選句子即可複製，或拍照翻譯後查看原文。",
                     color = Color.White.copy(alpha = 0.8f),
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -154,7 +150,7 @@ fun MainScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.fillMaxWidth()
                             .background(Color.White.copy(alpha = 0.11f), RoundedCornerShape(6.dp))
-                            .clickable(enabled = paused) {
+                            .clickable {
                                 clipboard.setText(AnnotatedString(element.originalText))
                                 Toast.makeText(context, "已複製原文", Toast.LENGTH_SHORT).show()
                             }
@@ -209,7 +205,7 @@ fun MainScreen(
                 style = MaterialTheme.typography.labelSmall
             )
         }
-        if (status != null && !paused && snapshotStatus == null) {
+        if (status != null && snapshotStatus == null) {
             Text(
                 status.orEmpty(),
                 color = Color.White,
@@ -217,17 +213,6 @@ fun MainScreen(
                     .padding(top = 136.dp, start = 18.dp, end = 18.dp)
                     .background(Color.Black.copy(alpha = 0.78f), RoundedCornerShape(8.dp))
                     .padding(10.dp)
-            )
-        }
-        if (paused) {
-            Text(
-                "已暫停：點選翻譯框即可複製文字",
-                color = Color.White,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.align(Alignment.BottomCenter)
-                    .padding(bottom = 88.dp)
-                    .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
             )
         }
         if (snapshotStatus == null) {
@@ -243,10 +228,6 @@ fun MainScreen(
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             Button(onClick = onNavigateToPicker) { Text("相簿") }
-            Button(onClick = {
-                paused = !paused
-                viewModel.isPaused = paused
-            }) { Text(if (paused) "恢復" else "暫停") }
             Button(onClick = {
                 showOriginal = !showOriginal
                 viewModel.showOriginal = showOriginal
@@ -283,11 +264,11 @@ fun MainScreen(
                     style = MaterialTheme.typography.bodySmall
                 )
                 if (image != null) {
-                    Image(
-                        bitmap = image.asImageBitmap(),
-                        contentDescription = if (showCapturedOriginal) "原始拍攝照片" else "譯文直接替換於照片原文字位置",
-                        modifier = Modifier.fillMaxWidth().weight(1f),
-                        contentScale = ContentScale.Fit
+                    ZoomablePhoto(
+                        bitmap = image,
+                        contentDescription = if (showCapturedOriginal)
+                            "原始拍攝照片，可雙指縮放" else "照片原位置翻譯結果，可雙指縮放",
+                        modifier = Modifier.fillMaxWidth().weight(1f)
                     )
                 } else {
                     Box(
