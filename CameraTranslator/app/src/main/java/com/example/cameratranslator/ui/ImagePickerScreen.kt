@@ -5,6 +5,7 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,6 +16,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.example.cameratranslator.core.MainViewModel
 import com.example.cameratranslator.overlay.TranslationOverlay
@@ -24,6 +27,7 @@ fun ImagePickerScreen(viewModel: MainViewModel) {
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
 
     val textElements by viewModel.textElements.collectAsState()
 
@@ -61,7 +65,15 @@ fun ImagePickerScreen(viewModel: MainViewModel) {
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize()
                 )
-                TranslationOverlay(textElements = textElements, showOriginal = false)
+                TranslationOverlay(
+                    textElements = textElements,
+                    showOriginal = false,
+                    paused = true,
+                    onCopy = { text ->
+                        clipboard.setText(AnnotatedString(text))
+                        Toast.makeText(context, "已複製文字", Toast.LENGTH_SHORT).show()
+                    }
+                )
             }
         }
     }

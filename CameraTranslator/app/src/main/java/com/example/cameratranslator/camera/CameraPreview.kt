@@ -20,6 +20,8 @@ import com.example.cameratranslator.core.MainViewModel
 import com.example.cameratranslator.core.models.TextElement
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.TextRecognizer
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlin.math.max
@@ -42,24 +44,41 @@ fun CameraPreviewScreen(viewModel: MainViewModel) {
             this.controller = controller
         }
     }
-    val latin = remember { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
-    val japanese = remember { TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build()) }
+    // Reconfigure OCR detectors when the user switches the source language.
+    // Manual mode runs only one recognizer, improving responsiveness and avoiding
+    // mixed-script false positives. Auto mode uses all supported scripts.
+    val selectedSource = viewModel.sourceLanguage
+    DisposableEffect(controller, owner, viewModel, selectedSource) {
+        val latin: TextRecognizer? = if (selectedSource == "auto" || selectedSource == "en")
+            TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) else null
+        val japanese: TextRecognizer? = if (selectedSource == "auto" || selectedSource == "ja")
+            TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build()) else null
+        val chinese: TextRecognizer? = if (selectedSource == "auto" || selectedSource == "zh")
+            TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build()) else null
+        val recognizers = listOfNotNull(latin, japanese, chinese)
 
-    DisposableEffect(controller, owner, viewModel) {
         viewModel.cameraController = controller
         controller.setImageAnalysisAnalyzer(
             executor,
             MlKitAnalyzer(
-                listOf(latin, japanese),
+                recognizers,
                 CameraController.COORDINATE_SYSTEM_VIEW_REFERENCED,
                 executor
             ) { result ->
                 if (!viewModel.isPaused) {
-                    result.getThrowable(latin)?.let { Log.w("CameraTranslator", "Latin OCR error", it) }
-                    result.getThrowable(japanese)?.let { Log.w("CameraTranslator", "Japanese OCR error", it) }
-                    val en = result.getValue(latin)?.let { extractLines(it, "en", false) }.orEmpty()
-                    val ja = result.getValue(japanese)?.let { extractLines(it, "ja", true) }.orEmpty()
-                    viewModel.onCameraTextElements(groupParagraphs(mergeLines(en, ja)))
+                    val en = latin?.let {
+                        result.getThrowable(it)?.let { error -> Log.w("CameraTranslator", "Latin OCR", error) }
+                        result.getValue(it)?.let { value -> extractLines(value, selectedSource, "en") }
+                    }.orEmpty()
+                    val ja = japanese?.let {
+                        result.getThrowable(it)?.let { error -> Log.w("CameraTranslator", "Japanese OCR", error) }
+                        result.getValue(it)?.let { value -> extractLines(value, selectedSource, "ja") }
+                    }.orEmpty()
+                    val zh = chinese?.let {
+                        result.getThrowable(it)?.let { error -> Log.w("CameraTranslator", "Chinese OCR", error) }
+                        result.getValue(it)?.let { value -> extractLines(value, selectedSource, "zh") }
+                    }.orEmpty()
+                    viewModel.onCameraTextElements(groupParagraphs(mergeLines(en, zh, ja)))
                 }
             }
         )
@@ -73,22 +92,35 @@ fun CameraPreviewScreen(viewModel: MainViewModel) {
             controller.clearImageAnalysisAnalyzer()
             controller.unbind()
             if (viewModel.cameraController === controller) viewModel.cameraController = null
-            latin.close()
-            japanese.close()
+            recognizers.forEach { it.close() }
         }
     }
     AndroidView(factory = { preview }, modifier = Modifier.fillMaxSize())
 }
 
-private val japaneseCharacters = Regex("[\u3040-\u30ff\u3400-\u9fff]")
+private val kanaCharacters = Regex("[\u3040-\u30ff]")
+private val hanCharacters = Regex("[\u3400-\u9fff]")
+private val latinCharacters = Regex("[A-Za-z]")
 
-private fun extractLines(result: Text, fallbackLanguage: String, japaneseOnly: Boolean): List<TextElement> =
+private fun extractLines(result: Text, selectedSource: String, script: String): List<TextElement> =
     result.textBlocks.flatMap { it.lines }.mapNotNull { line ->
         val value = line.text.trim()
         val box = line.boundingBox ?: return@mapNotNull null
         if (box.isEmpty || value.length < 2 || value.none { it.isLetter() }) return@mapNotNull null
-        if (japaneseOnly && !japaneseCharacters.containsMatchIn(value)) return@mapNotNull null
-        val language = if (japaneseCharacters.containsMatchIn(value)) "ja" else fallbackLanguage
+        val language = if (selectedSource != "auto") selectedSource else when {
+            kanaCharacters.containsMatchIn(value) -> "ja"
+            hanCharacters.containsMatchIn(value) -> "zh"
+            else -> "en"
+        }
+        if (selectedSource == "auto") {
+            val belongs = when (script) {
+                "ja" -> kanaCharacters.containsMatchIn(value)
+                "zh" -> hanCharacters.containsMatchIn(value)
+                else -> latinCharacters.containsMatchIn(value) &&
+                    !kanaCharacters.containsMatchIn(value) && !hanCharacters.containsMatchIn(value)
+            }
+            if (!belongs) return@mapNotNull null
+        }
         TextElement(
             id = language + ":" + value.lowercase(),
             originalText = value,
@@ -98,23 +130,29 @@ private fun extractLines(result: Text, fallbackLanguage: String, japaneseOnly: B
         )
     }
 
-private fun mergeLines(latin: List<TextElement>, japanese: List<TextElement>): List<TextElement> {
+/** Japanese wins on kana text, Chinese on Han-only, Latin on ordinary English. */
+private fun mergeLines(
+    latin: List<TextElement>,
+    chinese: List<TextElement>,
+    japanese: List<TextElement>
+): List<TextElement> {
     val output = latin.toMutableList()
-    for (candidate in japanese) {
+    for (candidate in chinese + japanese) {
         val box = candidate.boundingBox ?: continue
-        val overlapIndex = output.indexOfFirst { existing ->
+        val index = output.indexOfFirst { existing ->
             val old = existing.boundingBox ?: return@indexOfFirst false
             val w = max(0, min(box.right, old.right) - max(box.left, old.left))
             val h = max(0, min(box.bottom, old.bottom) - max(box.top, old.top))
-            val smallerArea = min(box.width() * box.height(), old.width() * old.height())
-            smallerArea > 0 && w.toFloat() * h / smallerArea > 0.55f
+            val smallerArea = min(box.width().toLong() * box.height(), old.width().toLong() * old.height())
+            smallerArea > 0 && (w.toLong() * h).toFloat() / smallerArea > 0.55f
         }
-        if (overlapIndex == -1) output.add(candidate)
-        else if (candidate.sourceLanguage == "ja") output[overlapIndex] = candidate
+        if (index == -1) output.add(candidate)
+        else if (candidate.sourceLanguage == "ja" ||
+            (candidate.sourceLanguage == "zh" && output[index].sourceLanguage == "en")
+        ) output[index] = candidate
     }
     return output.sortedWith(compareBy({ it.boundingBox?.top ?: Int.MAX_VALUE }, { it.boundingBox?.left ?: 0 })).take(64)
 }
-
 
 /**
  * Keep OCR/translation at paragraph granularity rather than drawing a new overlay

@@ -7,6 +7,7 @@ import com.example.cameratranslator.core.models.TextElement
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.tasks.await
@@ -20,7 +21,9 @@ import kotlin.math.min
 class MLKitOcrProvider : OcrProvider {
     private val latin = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private val japanese = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
-    private val japaneseChars = Regex("[\\u3040-\\u30ff\\u3400-\\u9fff]")
+    private val chinese = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
+    private val kanaChars = Regex("[\u3040-\u30ff]")
+    private val hanChars = Regex("[\u3400-\u9fff]")
 
     @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
     override suspend fun recognizeText(image: ImageProxy, rotationDegrees: Int): List<TextElement> {
@@ -42,19 +45,38 @@ class MLKitOcrProvider : OcrProvider {
     }
 
     override suspend fun recognizeTextFromBitmap(bitmap: Bitmap): List<TextElement> =
-        extract(InputImage.fromBitmap(bitmap, 0)).map {
+        recognizeTextFromBitmap(bitmap, "auto")
+
+    suspend fun recognizeTextFromBitmap(bitmap: Bitmap, selectedSource: String): List<TextElement> =
+        extract(InputImage.fromBitmap(bitmap, 0), selectedSource).map {
             it.copy(imageWidth = bitmap.width, imageHeight = bitmap.height)
         }
 
-    private suspend fun extract(input: InputImage): List<TextElement> {
+    private suspend fun extract(input: InputImage, selectedSource: String = "auto"): List<TextElement> {
         val all = mutableListOf<TextElement>()
-        // Both engines run independently: an error in one must not discard the other.
-        read(japanese, input).forEach { addOrReplace(all, it) }
-        read(latin, input).forEach { addOrReplace(all, it) }
+        // Manual source is authoritative. Auto uses only recognizer-specific scripts.
+        if (selectedSource == "auto" || selectedSource == "en") {
+            read(latin, input, if (selectedSource == "en") "en" else null)
+                .filter { selectedSource != "auto" ||
+                    (it.sourceLanguage == "en") }
+                .forEach { addOrReplace(all, it) }
+        }
+        if (selectedSource == "auto" || selectedSource == "zh") {
+            read(chinese, input, if (selectedSource == "zh") "zh" else null)
+                .filter { selectedSource != "auto" || it.sourceLanguage == "zh" }
+                .forEach { addOrReplace(all, it) }
+        }
+        if (selectedSource == "auto" || selectedSource == "ja") {
+            read(japanese, input, if (selectedSource == "ja") "ja" else null)
+                .filter { selectedSource != "auto" || it.sourceLanguage == "ja" }
+                .forEach { addOrReplace(all, it) }
+        }
         return all.take(24)
     }
 
-    private suspend fun read(recognizer: TextRecognizer, input: InputImage): List<TextElement> =
+    private suspend fun read(
+        recognizer: TextRecognizer, input: InputImage, forcedLanguage: String? = null
+    ): List<TextElement> =
         try {
             recognizer.process(input).await().textBlocks.mapNotNull { block ->
                 val text = block.text.trim()
@@ -63,7 +85,11 @@ class MLKitOcrProvider : OcrProvider {
                     id = text.hashCode().toString() + ":" + bounds.left / 24 + ":" + bounds.top / 24,
                     originalText = text,
                     boundingBox = bounds,
-                    sourceLanguage = if (japaneseChars.containsMatchIn(text)) "ja" else "en"
+                    sourceLanguage = forcedLanguage ?: when {
+                        kanaChars.containsMatchIn(text) -> "ja"
+                        hanChars.containsMatchIn(text) -> "zh"
+                        else -> "en"
+                    }
                 )
             }
         } catch (_: Exception) {
