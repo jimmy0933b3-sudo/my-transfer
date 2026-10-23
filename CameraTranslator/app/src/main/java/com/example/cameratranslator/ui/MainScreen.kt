@@ -92,6 +92,9 @@ fun MainScreen(
     val translatedPhoto by viewModel.snapshotTranslatedPhoto.collectAsState()
     var showCapturedOriginal by remember { mutableStateOf(false) }
     var showPhotoDetails by remember { mutableStateOf(false) }
+    var editOcrIndex by remember { mutableStateOf<Int?>(null) }
+    var editOcrText by remember { mutableStateOf("") }
+    var editTranslationText by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     var paused by remember { mutableStateOf(viewModel.isPaused) }
     var showOriginal by remember { mutableStateOf(viewModel.showOriginal) }
@@ -352,7 +355,7 @@ fun MainScreen(
                     ) { Text("分享圖片", color = Color.White) }
                 }
                 TextButton(onClick = { showPhotoDetails = !showPhotoDetails }) {
-                    Text(if (showPhotoDetails) "收合 OCR 原文與譯文" else "查看各段 OCR 原文及譯文",
+                    Text(if (showPhotoDetails) "收合 OCR 明細" else "查看／修正 OCR 原文及譯文",
                         color = Color.White)
                 }
                 if (showPhotoDetails) {
@@ -366,6 +369,11 @@ fun MainScreen(
                             Column(
                                 Modifier.fillMaxWidth()
                                     .background(Color(0xFF22363A), RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        editOcrIndex = i
+                                        editOcrText = line.original
+                                        editTranslationText = line.translated.orEmpty()
+                                    }
                                     .padding(10.dp)
                             ) {
                                 Text((i+1).toString() + ". 原文：" + line.original,
@@ -377,6 +385,51 @@ fun MainScreen(
                     }
                 }
             }
+        }
+        if (editOcrIndex != null) {
+            AlertDialog(
+                onDismissRequest = { editOcrIndex = null },
+                title = { Text("修正 OCR 錯字") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "先校正相機辨識的原文。修改原文會重新翻譯並更新照片上的文字。",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        OutlinedTextField(
+                            value = editOcrText,
+                            onValueChange = { editOcrText = it },
+                            label = { Text("OCR 原文（可修正）") },
+                            maxLines = 5
+                        )
+                        OutlinedTextField(
+                            value = editTranslationText,
+                            onValueChange = { editTranslationText = it },
+                            label = { Text("譯文（只改譯文可直接套用）") },
+                            maxLines = 5
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        editOcrIndex?.let { index ->
+                            val old = snapshotLines.getOrNull(index)
+                            if (old != null) {
+                                viewModel.correctSnapshotOcr(
+                                    index, editOcrText,
+                                    if (editOcrText.trim() == old.original.trim())
+                                        editTranslationText else null
+                                )
+                            }
+                        }
+                        editOcrIndex = null
+                        showCapturedOriginal = false
+                    }) { Text("重新翻譯並更新照片") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { editOcrIndex = null }) { Text("取消") }
+                }
+            )
         }
 
     }
