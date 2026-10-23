@@ -63,6 +63,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     ) {
         TextButton(onClick = onBack) { Text("← 返回相機") }
         Text("翻譯設定", style = MaterialTheme.typography.headlineMedium)
+        Text("高解析度拍照翻譯支援英文、日文、中文及泰文；來源 Auto 也可搭配拍照辨識。泰文即時相機 OCR 尚未支援。", style = MaterialTheme.typography.bodySmall)
         Text("相機上方可手動選來源與目標語系。暫停後點文字框即可複製；原文按鈕可顯示 OCR 結果。")
 
         Text("翻譯框不透明度：" + (opacity * 100).toInt() + "%")
@@ -136,6 +137,16 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                 "如未在 Cloudflare 建立 APP_ACCESS_TOKEN Secret，Worker 會拒絕任何翻譯呼叫。",
             style = MaterialTheme.typography.bodySmall
         )
+        HorizontalDivider()
+        Text("泰文 OCR 模型（拍照翻譯）", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "ML Kit 不支援泰文字形，泰文使用 Tesseract OCR。首次下載免費模型，之後不需網路也可辨識；雲端翻譯仍只傳 OCR 文字。",
+            style = MaterialTheme.typography.bodySmall
+        )
+        Text(viewModel.thaiOcrModelStatus, style = MaterialTheme.typography.bodyMedium)
+        OutlinedButton(onClick = viewModel::downloadThaiOcrModel) {
+            Text("下載／重試泰文 OCR 模型")
+        }
         HorizontalDivider()
         Text("離線語言模型", style = MaterialTheme.typography.titleLarge)
         Text(
