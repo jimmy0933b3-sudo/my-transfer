@@ -40,15 +40,18 @@ fun TranslationOverlay(
         val margin = with(density) { 8.dp.toPx() }
         val safeTop = with(density) { 150.dp.toPx() }
         val safeBottom = screenHeight - with(density) { 88.dp.toPx() }
-        val minCard = with(density) { 112.dp.toPx() }
-        val maxCard = with(density) { 265.dp.toPx() }
+        val minCard = with(density) { 135.dp.toPx() }
+        val maxCard = with(density) { 280.dp.toPx() }
         val linePixels = with(density) { 20.sp.toPx() }
         val used = mutableListOf<RectF>()
 
         textElements.sortedBy { it.boundingBox?.top ?: Int.MAX_VALUE }.forEach { element ->
             val box = element.boundingBox ?: return@forEach
-            val text = (if (showOriginal) element.originalText else element.translatedText
-                ?: if (paused) element.originalText else "").trim()
+            // Raw OCR must NOT masquerade as a translated overlay when
+            // translation is pending, failed, or the user paused the camera.
+            // Original text is displayed in its own readable list in MainScreen.
+            if (showOriginal) return@forEach
+            val text = element.translatedText.orEmpty().trim()
             if (text.isEmpty()) return@forEach
 
             val rect = if (element.isViewCoordinates) {
