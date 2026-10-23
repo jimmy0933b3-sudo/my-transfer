@@ -29,6 +29,11 @@ class ThaiPhotoOcrProvider(private val context: Context) {
 
     private fun modelDirectory() = File(context.filesDir, "tesseract/tessdata")
 
+    fun isModelInstalled(): Boolean {
+        val model = File(modelDirectory(), "tha.traineddata")
+        return model.isFile && model.length() in MIN_MODEL_BYTES..MAX_MODEL_BYTES
+    }
+
     private fun ensureModel() {
         val directory = modelDirectory()
         if (!directory.exists() && !directory.mkdirs()) {
