@@ -89,6 +89,7 @@ fun MainScreen(
     var showPhotoOriginal by remember { mutableStateOf(false) }
     var editingLine by remember { mutableStateOf<Int?>(null) }
     var correctedText by remember { mutableStateOf("") }
+    var correctedOriginal by remember { mutableStateOf("") }
     var paused by remember { mutableStateOf(viewModel.isPaused) }
     var showOriginal by remember { mutableStateOf(viewModel.showOriginal) }
     val clipboard = LocalClipboardManager.current
@@ -189,6 +190,7 @@ fun MainScreen(
                                 .clickable(enabled = !line.translated.isNullOrBlank()) {
                                     editingLine = index
                                     correctedText = line.translated.orEmpty()
+                                    correctedOriginal = line.original
                                 }
                                 .padding(horizontal = 9.dp, vertical = 6.dp)
                         ) {
@@ -211,10 +213,15 @@ fun MainScreen(
         if (editingLine != null) {
             AlertDialog(
                 onDismissRequest = { editingLine = null },
-                title = { Text("修正照片上的譯文") },
+                title = { Text("校正 OCR 與譯文") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(snapshotLines.getOrNull(editingLine ?: -1)?.original.orEmpty())
+                        OutlinedTextField(
+                            value = correctedOriginal,
+                            onValueChange = { correctedOriginal = it },
+                            label = { Text("OCR 原文（辨識錯字請在這裡改）") },
+                            maxLines = 5
+                        )
                         OutlinedTextField(
                             value = correctedText,
                             onValueChange = { correctedText = it },
@@ -225,10 +232,19 @@ fun MainScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        editingLine?.let { viewModel.updateSnapshotTranslation(it, correctedText) }
+                        editingLine?.let { index ->
+                            val old = snapshotLines.getOrNull(index)
+                            if (old != null) {
+                                if (correctedOriginal.trim() != old.original.trim()) {
+                                    viewModel.correctSnapshotOcr(index, correctedOriginal)
+                                } else {
+                                    viewModel.updateSnapshotTranslation(index, correctedText)
+                                }
+                            }
+                        }
                         editingLine = null
                         showPhotoOriginal = false
-                    }) { Text("套用到照片") }
+                    }) { Text("修正並更新照片") }
                 },
                 dismissButton = {
                     TextButton(onClick = { editingLine = null }) { Text("取消") }
