@@ -24,6 +24,7 @@ import com.example.cameratranslator.core.models.TextElement
 import com.example.cameratranslator.history.HistoryDao
 import com.example.cameratranslator.history.TranslationHistory
 import com.example.cameratranslator.ocr.MLKitOcrProvider
+import com.example.cameratranslator.ocr.PaddleOcrCloudProvider
 import com.example.cameratranslator.ocr.ThaiPhotoOcrProvider
 import com.example.cameratranslator.translation.MLKitTranslationProvider
 import com.example.cameratranslator.translation.CloudCredentialStore
@@ -48,6 +49,20 @@ class MainViewModel @Inject constructor(
     private val historyDao: HistoryDao
 ) : AndroidViewModel(application) {
     private val photoOcr = MLKitOcrProvider(application)
+    private val paddlePhotoOcr = PaddleOcrCloudProvider()
+    var preferPaddleOcr by mutableStateOf(
+        application.getSharedPreferences("translator_settings", 0)
+            .getBoolean("prefer_paddle_ocr", true)
+    )
+        private set
+    var actualPhotoOcrEngine by mutableStateOf("尚未拍照")
+        private set
+
+    fun setPaddleOcrPreference(enabled: Boolean) {
+        preferPaddleOcr = enabled
+        getApplication<Application>().getSharedPreferences("translator_settings", 0)
+            .edit().putBoolean("prefer_paddle_ocr", enabled).apply()
+    }
     private val photoGlossary = PhotoTranslationMemory(application)
     private val thaiOcrModels = ThaiPhotoOcrProvider(application)
     var thaiOcrModelStatus by mutableStateOf(
@@ -213,6 +228,7 @@ class MainViewModel @Inject constructor(
         capturedSnapshotElements = emptyList()
         _snapshotOriginalPhoto.value = null
         _snapshotTranslatedPhoto.value = null
+        actualPhotoOcrEngine = "尚未拍照"
         isPaused = false
         resetRecognitions()
     }
@@ -282,13 +298,35 @@ class MainViewModel @Inject constructor(
         val requestedSource = sourceLanguage
         val requestedTarget = targetLanguage
         _snapshotOriginalPhoto.value = bitmap
-        val raw = photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
+        // Primary cloud OCR: real PP-OCRv5 if the separate inference service
+        // has been deployed. It never runs in offline mode. On missing service,
+        // timeout or invalid output, fall back to device ML Kit/Tesseract OCR.
+        val usePaddle = preferPaddleOcr && cloudTokenConfigured &&
+            translationMode != "offline" && shouldTryCloud()
+        if (usePaddle) _snapshotStatus.value = "正在以 PaddleOCR PP-OCRv5 辨識照片…"
+        val paddle = if (usePaddle) paddlePhotoOcr.recognize(
+            bitmap, requestedSource, cloudCredentials.load().orEmpty()
+        ) else null
+        val raw = if (!paddle.isNullOrEmpty()) {
+            actualPhotoOcrEngine = "PaddleOCR PP-OCRv5 雲端"
+            paddle
+        } else {
+            actualPhotoOcrEngine = if (requestedSource == "th") "Tesseract 泰文離線"
+                else "ML Kit 本機 OCR"
+            _snapshotStatus.value = if (usePaddle)
+                "PP-OCRv5 未連線或未辨識到文字，改用本機 OCR…"
+            else "使用本機 OCR 辨識照片…"
+            photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
+        }
         if (thaiOcrModels.isModelInstalled()) {
             thaiOcrModelStatus = "已下載，可離線辨識泰文"
         }
         val selected = raw.filter {
             !it.originalText.isBlank() && it.originalText.length > 1
-        }.distinctBy { it.originalText.trim() }.take(18)
+        }.distinctBy {
+            it.originalText.trim() + "@" +
+                (it.boundingBox?.left ?: 0) + ":" + (it.boundingBox?.top ?: 0)
+        }.take(32)
         if (selected.isEmpty()) {
             _snapshotStatus.value = "沒有辨識到清楚文字，請靠近、避開反光再拍攝"
             return
@@ -360,7 +398,8 @@ class MainViewModel @Inject constructor(
             )
         }
         _snapshotTranslatedPhoto.value = composited.bitmap
-        _snapshotStatus.value = "已辨識 " + selected.size + " 段，翻譯 " +
+        _snapshotStatus.value = actualPhotoOcrEngine + "。已辨識 " +
+            selected.size + " 段，翻譯 " +
             translatedCount + " 段，照片替字 " + composited.placed +
             " 段。" + if (composited.skipped > 0)
                 " 有 " + composited.skipped + " 段因座標或字數問題未替換，可查看文字明細。" else ""
