@@ -176,6 +176,11 @@ fun MainScreen(
                     Text("設定")
                 }
             }
+            Text(
+                text = "OCR：${textElements.size} 段 ｜雲端／離線譯文：${textElements.count { it.translationEngine != null }} 段",
+                color = Color.White.copy(alpha = 0.92f),
+                style = MaterialTheme.typography.labelSmall
+            )
         }
         if (status != null && !paused) {
             Text(

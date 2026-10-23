@@ -172,8 +172,11 @@ class MainViewModel @Inject constructor(
             ?: return false
         val capabilities = manager.getNetworkCapabilities(manager.activeNetwork ?: return false)
             ?: return false
-        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        // Auto should work on both Wi-Fi and mobile data. Previously it
+        // silently forced offline on 4G, leaving users with no translation if
+        // the offline model had not been downloaded.
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
 
@@ -375,8 +378,8 @@ class MainViewModel @Inject constructor(
             val cloudPreferred = shouldTryCloud()
             val offlineReady = translator.isReadyFor(element.sourceLanguage, targetLanguage)
             if (!cloudPreferred && !offlineReady) {
-                _statusMessage.value = if (cloudTokenConfigured && translationMode == "auto")
-                    "目前使用行動網路；自動模式需要 Wi-Fi，或請在設定改為雲端優先"
+                _statusMessage.value = if (cloudTokenConfigured && translationMode != "offline")
+                    "雲端暫時不可用且離線模型未就緒，請到設定測試 Azure 或下載模型"
                 else "離線模型尚未就緒，請到設定下載語言模型"
                 continue
             }
@@ -424,7 +427,9 @@ class MainViewModel @Inject constructor(
                     } else if (actualEngine == "Azure 雲端") {
                         cloudRetryAfterMs = 0L
                     }
-                    if (!translated.isNullOrBlank() && translated != element.originalText) {
+                    // Brand names and proper nouns often remain unchanged in
+                    // the translation. That is a valid response, not a failure.
+                    if (!translated.isNullOrBlank()) {
                         cache[translationKey] = translated
                         if (actualEngine != null) {
                             cacheEngine[translationKey] = actualEngine!!
