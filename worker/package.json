@@ -1,0 +1,14 @@
+{
+  "name": "camera-translator-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "test": "node --test",
+    "check": "node --check src/index.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.45.0"
+  }
+}
