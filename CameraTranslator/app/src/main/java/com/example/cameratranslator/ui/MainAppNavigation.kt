@@ -14,7 +14,9 @@ fun MainAppNavigation(viewModel: MainViewModel) {
             onNavigateToPicker = { screen = "Picker" },
             onNavigateToSettings = { screen = "Settings" }
         )
-        "Picker" -> ImagePickerScreen(viewModel = viewModel)
+        "Picker" -> ImagePickerScreen(viewModel = viewModel, onReturnToCamera = {
+            screen = "Camera"
+        })
         "Settings" -> SettingsScreen(viewModel = viewModel, onBack = { screen = "Camera" })
     }
 }
