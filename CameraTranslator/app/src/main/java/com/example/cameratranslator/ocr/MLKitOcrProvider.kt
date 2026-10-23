@@ -1,5 +1,6 @@
 package com.example.cameratranslator.ocr
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Rect
 import androidx.camera.core.ImageProxy
@@ -18,7 +19,8 @@ import kotlin.math.min
  * Latin and Japanese recognizers are both required. The old implementation
  * ran only Japanese and incorrectly labeled every result "ja/en".
  */
-class MLKitOcrProvider : OcrProvider {
+class MLKitOcrProvider(context: Context) : OcrProvider {
+    private val thai = ThaiPhotoOcrProvider(context.applicationContext)
     private val latin = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private val japanese = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
     private val chinese = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
@@ -47,10 +49,21 @@ class MLKitOcrProvider : OcrProvider {
     override suspend fun recognizeTextFromBitmap(bitmap: Bitmap): List<TextElement> =
         recognizeTextFromBitmap(bitmap, "auto")
 
-    suspend fun recognizeTextFromBitmap(bitmap: Bitmap, selectedSource: String): List<TextElement> =
-        extract(InputImage.fromBitmap(bitmap, 0), selectedSource).map {
+    suspend fun recognizeTextFromBitmap(bitmap: Bitmap, selectedSource: String): List<TextElement> {
+        if (selectedSource == "th") return thai.recognize(bitmap)
+        val mlKit = extract(InputImage.fromBitmap(bitmap, 0), selectedSource).map {
             it.copy(imageWidth = bitmap.width, imageHeight = bitmap.height)
         }
+        // Auto remains fast and works without network. Thai recognition joins
+        // only after its model has already been downloaded during manual Thai use.
+        if (selectedSource != "auto" || !thai.isModelInstalled()) return mlKit
+        val thaiLines = try {
+            thai.recognize(bitmap)
+        } catch (_: Exception) {
+            emptyList()
+        }
+        return (mlKit + thaiLines).distinctBy { it.sourceLanguage + ":" + it.originalText }.take(32)
+    }
 
     private suspend fun extract(input: InputImage, selectedSource: String = "auto"): List<TextElement> {
         val all = mutableListOf<TextElement>()
