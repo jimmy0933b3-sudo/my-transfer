@@ -50,6 +50,7 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
         recognizeTextFromBitmap(bitmap, "auto")
 
     suspend fun recognizeTextFromBitmap(bitmap: Bitmap, selectedSource: String): List<TextElement> {
+        require(PhotoOcrLanguages.supported(selectedSource)) { "Unsupported photo OCR language" }
         if (selectedSource == "th") return thai.recognize(bitmap)
         val mlKit = extract(InputImage.fromBitmap(bitmap, 0), selectedSource).map {
             it.copy(imageWidth = bitmap.width, imageHeight = bitmap.height)
@@ -62,7 +63,7 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
         } catch (_: Exception) {
             emptyList()
         }
-        return (mlKit + thaiLines).distinctBy { it.sourceLanguage + ":" + it.originalText }.take(32)
+        return (thaiLines + mlKit).distinctBy { it.sourceLanguage + ":" + it.originalText }.take(32)
     }
 
     private suspend fun extract(input: InputImage, selectedSource: String = "auto"): List<TextElement> {
