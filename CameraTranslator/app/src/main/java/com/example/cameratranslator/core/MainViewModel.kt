@@ -86,17 +86,22 @@ class MainViewModel @Inject constructor(
     val textElements: StateFlow<List<TextElement>> = _textElements.asStateFlow()
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
+    // Actual last successful translation provider, not the requested mode.
+    private val _translationEngine = MutableStateFlow<String?>(null)
+    val translationEngine: StateFlow<String?> = _translationEngine.asStateFlow()
 
     private data class Tracked(
         val element: TextElement,
         val lastSeenMs: Long,
         val candidateText: String? = null,
-        val candidateCount: Int = 0
+        val candidateCount: Int = 0,
+        val seenCount: Int = 1
     )
     private val tracked = linkedMapOf<String, Tracked>()
     private var nextTrackId = 0L
     private var lastSampleMs = 0L
     private val cache = mutableMapOf<String, String>()
+    private val cacheEngine = mutableMapOf<String, String>()
     private val pending = mutableSetOf<String>()
     private val retryAfter = mutableMapOf<String, Long>()
     private val preferences = application.getSharedPreferences("translator_settings", 0)
@@ -111,6 +116,7 @@ class MainViewModel @Inject constructor(
         translationMode = mode
         preferences.edit().putString("translation_mode", mode).apply()
         cache.clear()
+        cacheEngine.clear()
         resetRecognitions()
     }
 
@@ -119,6 +125,7 @@ class MainViewModel @Inject constructor(
         if (saved) {
             cloudTokenConfigured = true
             cache.clear()
+            cacheEngine.clear()
             resetRecognitions()
         }
         return saved
@@ -128,6 +135,7 @@ class MainViewModel @Inject constructor(
         cloudCredentials.clear()
         cloudTokenConfigured = false
         cache.clear()
+        cacheEngine.clear()
         resetRecognitions()
     }
 
@@ -175,6 +183,7 @@ class MainViewModel @Inject constructor(
         languageRevision++
         tracked.clear()
         _statusMessage.value = null
+        _translationEngine.value = null
         publish()
         lastSampleMs = 0L
     }
@@ -284,7 +293,8 @@ class MainViewModel @Inject constructor(
                 incoming.copy(
                     id = id,
                     translatedText = if (incoming.sourceLanguage == targetLanguage)
-                        incoming.originalText else cache[key(incoming)] ?: old.element.translatedText
+                        incoming.originalText else cache[key(incoming)],
+                    translationEngine = cacheEngine[key(incoming)]
                 )
             } else {
                 old.element.copy(
@@ -300,7 +310,9 @@ class MainViewModel @Inject constructor(
                 ),
                 lastSeenMs = now,
                 candidateText = if (unchanged || confirmed) null else incoming.originalText,
-                candidateCount = if (unchanged || confirmed) 0 else candidateCount
+                candidateCount = if (unchanged || confirmed) 0 else candidateCount,
+                seenCount = if (unchanged) old.seenCount + 1
+                    else if (confirmed) 1 else old.seenCount
             )
         }
 
@@ -314,6 +326,9 @@ class MainViewModel @Inject constructor(
 
         for ((_, old) in tracked) {
             val element = old.element
+            // A single noisy OCR frame is not enough to spend cloud quota
+            // or render a hallucinated translation.
+            if (old.seenCount < 3) continue
             val translationKey = key(element)
             if (element.sourceLanguage == targetLanguage) {
                 if (element.translatedText != element.originalText) {
@@ -324,7 +339,12 @@ class MainViewModel @Inject constructor(
                 continue
             }
             val cached = cache[translationKey]
-            if (!cached.isNullOrBlank()) continue
+            if (!cached.isNullOrBlank()) {
+                if (_translationEngine.value == null) {
+                    _translationEngine.value = cacheEngine[translationKey]
+                }
+                continue
+            }
             val cloudPreferred = shouldTryCloud()
             val offlineReady = translator.isReadyFor(element.sourceLanguage, targetLanguage)
             if (!cloudPreferred && !offlineReady) {
@@ -340,6 +360,7 @@ class MainViewModel @Inject constructor(
             val requestedTarget = targetLanguage
             val requestedRevision = languageRevision
             viewModelScope.launch(Dispatchers.IO) {
+                var actualEngine: String? = null
                 val translated = try {
                     val cloudResult = if (cloudPreferred) {
                         cloudTranslator.translate(
@@ -347,8 +368,15 @@ class MainViewModel @Inject constructor(
                             cloudCredentials.load().orEmpty()
                         )
                     } else null
-                    cloudResult ?: if (offlineReady) {
-                        translator.translate(element.originalText, element.sourceLanguage, requestedTarget)
+                    if (!cloudResult.isNullOrBlank()) {
+                        actualEngine = "Azure 雲端"
+                        cloudResult
+                    } else if (offlineReady) {
+                        val offlineResult = translator.translate(
+                            element.originalText, element.sourceLanguage, requestedTarget
+                        )
+                        if (!offlineResult.isNullOrBlank()) actualEngine = "ML Kit 離線"
+                        offlineResult
                     } else null
                 } catch (e: Exception) {
                     Log.w("CameraTranslator", "Translation failed", e)
@@ -359,12 +387,19 @@ class MainViewModel @Inject constructor(
                     if (requestedRevision != languageRevision) return@withContext
                     if (!translated.isNullOrBlank() && translated != element.originalText) {
                         cache[translationKey] = translated
+                        if (actualEngine != null) {
+                            cacheEngine[translationKey] = actualEngine!!
+                            _translationEngine.value = actualEngine
+                        }
                         // A delayed result may update only the paragraph that asked
                         // for this exact text, never an unrelated box at that location.
                         tracked.forEach { (id, current) ->
                             if (key(current.element) == translationKey) {
                                 tracked[id] = current.copy(
-                                    element = current.element.copy(translatedText = translated)
+                                    element = current.element.copy(
+                                        translatedText = translated,
+                                        translationEngine = actualEngine
+                                    )
                                 )
                             }
                         }
@@ -380,7 +415,7 @@ class MainViewModel @Inject constructor(
             }
         }
         if (detected.isEmpty() && tracked.isEmpty() && pending.isEmpty()) {
-            _statusMessage.value = "請對準英文或日文文字"
+            _statusMessage.value = "請對準英文、日文或中文字"
         }
         publish()
     }

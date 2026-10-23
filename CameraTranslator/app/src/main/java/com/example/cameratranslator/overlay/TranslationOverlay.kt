@@ -38,11 +38,11 @@ fun TranslationOverlay(
         val screenWidth = with(density) { maxWidth.toPx() }
         val screenHeight = with(density) { maxHeight.toPx() }
         val margin = with(density) { 8.dp.toPx() }
-        val safeTop = with(density) { 142.dp.toPx() }
+        val safeTop = with(density) { 150.dp.toPx() }
         val safeBottom = screenHeight - with(density) { 88.dp.toPx() }
-        val minCard = with(density) { 155.dp.toPx() }
-        val maxCard = with(density) { 310.dp.toPx() }
-        val linePixels = with(density) { 23.sp.toPx() }
+        val minCard = with(density) { 112.dp.toPx() }
+        val maxCard = with(density) { 265.dp.toPx() }
+        val linePixels = with(density) { 20.sp.toPx() }
         val used = mutableListOf<RectF>()
 
         textElements.sortedBy { it.boundingBox?.top ?: Int.MAX_VALUE }.forEach { element ->
@@ -72,12 +72,12 @@ fun TranslationOverlay(
             val x = rect.left.coerceIn(margin, max(margin, screenWidth - margin - cardWidth))
             // Chinese glyphs are close to one full em; underestimating their width
             // caused actual cards to collide with the next translated paragraph.
-            val glyphWidth = with(density) { 18.sp.toPx() }
+            val glyphWidth = with(density) { 16.sp.toPx() }
             val charactersPerRow = max(5, ((cardWidth - with(density) { 20.dp.toPx() }) / glyphWidth).toInt())
             val rows = text.split('\n').sumOf {
                 max(1, (it.length + charactersPerRow - 1) / charactersPerRow)
             }
-            val cardHeight = with(density) { 15.dp.toPx() } + min(6, rows) * linePixels
+            val cardHeight = with(density) { 14.dp.toPx() } + min(4, rows) * linePixels
             var y = rect.top.coerceIn(safeTop, max(safeTop, safeBottom - margin - cardHeight))
 
             repeat(used.size) {
@@ -103,9 +103,9 @@ fun TranslationOverlay(
                 Text(
                     text = text,
                     color = Color.White,
-                    fontSize = 18.sp,
-                    lineHeight = 23.sp,
-                    maxLines = 6,
+                    fontSize = 16.sp,
+                    lineHeight = 20.sp,
+                    maxLines = 4,
                     overflow = TextOverflow.Ellipsis
                 )
             }

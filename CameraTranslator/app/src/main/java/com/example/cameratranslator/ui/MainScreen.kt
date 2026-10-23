@@ -75,6 +75,7 @@ fun MainScreen(
 ) {
     val textElements by viewModel.textElements.collectAsState()
     val status by viewModel.statusMessage.collectAsState()
+    val actualEngine by viewModel.translationEngine.collectAsState()
     var paused by remember { mutableStateOf(viewModel.isPaused) }
     var showOriginal by remember { mutableStateOf(viewModel.showOriginal) }
     val clipboard = LocalClipboardManager.current
@@ -113,6 +114,17 @@ fun MainScreen(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (actualEngine != null) {
+                    Text(
+                        text = "實際：$actualEngine",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier
+                            .background(Color(0xFF163F42), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 7.dp, vertical = 5.dp)
+                    )
+                    Spacer(Modifier.weight(1f))
+                }
                 Button(onClick = viewModel::toggleFlashlight, contentPadding = PaddingValues(horizontal = 12.dp)) {
                     Text("手電筒")
                 }

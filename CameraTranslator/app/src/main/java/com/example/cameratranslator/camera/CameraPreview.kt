@@ -102,22 +102,35 @@ private val kanaCharacters = Regex("[\u3040-\u30ff]")
 private val hanCharacters = Regex("[\u3400-\u9fff]")
 private val latinCharacters = Regex("[A-Za-z]")
 
+/**
+ * OCR engines trained for CJK scripts can hallucinate Chinese glyphs over
+ * English packaging. Auto mode selects the recognizer by the actual script,
+ * not merely by whichever engine produced some text.
+ *
+ * Do not discard Chinese/English mixed labels wholesale. Mixed Latin-heavy
+ * candidates from the Chinese recognizer require a much stronger Han signal.
+ */
 private fun extractLines(result: Text, selectedSource: String, script: String): List<TextElement> =
     result.textBlocks.flatMap { it.lines }.mapNotNull { line ->
-        val value = line.text.trim()
+        val value = line.text.trim().replace(Regex("\\s+"), " ")
         val box = line.boundingBox ?: return@mapNotNull null
         if (box.isEmpty || value.length < 2 || value.none { it.isLetter() }) return@mapNotNull null
-        val language = if (selectedSource != "auto") selectedSource else when {
-            kanaCharacters.containsMatchIn(value) -> "ja"
-            hanCharacters.containsMatchIn(value) -> "zh"
+        val kana = kanaCharacters.findAll(value).count()
+        val han = hanCharacters.findAll(value).count()
+        val latin = latinCharacters.findAll(value).count()
+        // Reject incidental stray glyphs, OCR fragment noise and single letters.
+        if (value.count { it.isLetter() } < 2) return@mapNotNull null
+        val language = if (selectedSource != "auto") selectedSource else when (script) {
+            "ja" -> "ja"
+            "zh" -> "zh"
             else -> "en"
         }
         if (selectedSource == "auto") {
             val belongs = when (script) {
-                "ja" -> kanaCharacters.containsMatchIn(value)
-                "zh" -> hanCharacters.containsMatchIn(value)
-                else -> latinCharacters.containsMatchIn(value) &&
-                    !kanaCharacters.containsMatchIn(value) && !hanCharacters.containsMatchIn(value)
+                "ja" -> kana >= 2 && kana >= han / 3
+                "zh" -> han >= 3 && kana == 0 &&
+                    han.toFloat() / (han + latin).coerceAtLeast(1) >= 0.80f
+                else -> latin >= 2 && han == 0 && kana == 0
             }
             if (!belongs) return@mapNotNull null
         }
@@ -130,7 +143,11 @@ private fun extractLines(result: Text, selectedSource: String, script: String): 
         )
     }
 
-/** Japanese wins on kana text, Chinese on Han-only, Latin on ordinary English. */
+/**
+ * Deduplicate recognizer results spatially while preferring legible English
+ * on predominantly Latin packaging. Previous code ALWAYS overwrote overlapping
+ * Latin text with the Chinese recognizer's result, even when it was nonsense.
+ */
 private fun mergeLines(
     latin: List<TextElement>,
     chinese: List<TextElement>,
@@ -143,15 +160,31 @@ private fun mergeLines(
             val old = existing.boundingBox ?: return@indexOfFirst false
             val w = max(0, min(box.right, old.right) - max(box.left, old.left))
             val h = max(0, min(box.bottom, old.bottom) - max(box.top, old.top))
-            val smallerArea = min(box.width().toLong() * box.height(), old.width().toLong() * old.height())
-            smallerArea > 0 && (w.toLong() * h).toFloat() / smallerArea > 0.55f
+            val smallerArea = min(
+                box.width().toLong() * box.height(),
+                old.width().toLong() * old.height()
+            ).coerceAtLeast(1L)
+            (w.toLong() * h).toFloat() / smallerArea >= 0.50f
         }
-        if (index == -1) output.add(candidate)
-        else if (candidate.sourceLanguage == "ja" ||
-            (candidate.sourceLanguage == "zh" && output[index].sourceLanguage == "en")
-        ) output[index] = candidate
+        if (index == -1) {
+            output.add(candidate)
+        } else {
+            val existing = output[index]
+            val han = hanCharacters.findAll(candidate.originalText).count()
+            val kana = kanaCharacters.findAll(candidate.originalText).count()
+            val latinInExisting = latinCharacters.findAll(existing.originalText).count()
+            val preferCandidate = when {
+                candidate.sourceLanguage == "ja" -> kana >= 2
+                candidate.sourceLanguage == "zh" && existing.sourceLanguage == "en" ->
+                    han >= 3 && han >= latinInExisting * 2
+                else -> false
+            }
+            if (preferCandidate) output[index] = candidate
+        }
     }
-    return output.sortedWith(compareBy({ it.boundingBox?.top ?: Int.MAX_VALUE }, { it.boundingBox?.left ?: 0 })).take(64)
+    return output.sortedWith(
+        compareBy({ it.boundingBox?.top ?: Int.MAX_VALUE }, { it.boundingBox?.left ?: 0 })
+    ).take(48)
 }
 
 /**
@@ -169,7 +202,7 @@ private fun groupParagraphs(lines: List<TextElement>): List<TextElement> {
         val language = first.sourceLanguage
 
         fun canAppend(next: TextElement): Boolean {
-            if (next.sourceLanguage != language || parts.size >= 8) return false
+            if (next.sourceLanguage != language || parts.size >= 5) return false
             val previous = parts.last().boundingBox ?: return false
             val candidate = next.boundingBox ?: return false
             val shortHeight = min(previous.height(), candidate.height()).toFloat()
@@ -184,7 +217,7 @@ private fun groupParagraphs(lines: List<TextElement>): List<TextElement> {
             val overlap = max(0, min(previous.right, candidate.right) - max(previous.left, candidate.left))
             val smallerWidth = min(previous.width(), candidate.width()).coerceAtLeast(1)
             val aligned = kotlin.math.abs(previous.left - candidate.left) <= tallHeight * 1.6f
-            return overlap >= smallerWidth * 0.35f && aligned
+            return overlap >= smallerWidth * 0.48f && aligned
         }
 
         fun add(line: TextElement) {
