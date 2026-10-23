@@ -19,13 +19,14 @@ internal object PhotoOcrPostProcessor {
         val top: Int,
         val right: Int,
         val bottom: Int,
-        val originalIndices: List<Int>
+        val originalIndices: List<Int>,
+        val lineCount: Int = (text.count { it == '\n' } + 1).coerceAtLeast(1)
     ) {
         val width: Int get() = right - left
         val height: Int get() = bottom - top
         val centerX: Float get() = (left + right) / 2f
         val lineHeight: Float get() =
-            height.toFloat() / (text.count { it == '\n' } + 1).coerceAtLeast(1)
+            height.toFloat() / lineCount.coerceAtLeast(1)
     }
 
     /** Never use a global 0 -> O replacement: years, quantities and codes must survive. */
@@ -60,7 +61,8 @@ internal object PhotoOcrPostProcessor {
                 top = min(previous.top, next.top),
                 right = max(previous.right, next.right),
                 bottom = max(previous.bottom, next.bottom),
-                originalIndices = previous.originalIndices + next.originalIndices
+                originalIndices = previous.originalIndices + next.originalIndices,
+                lineCount = previous.lineCount + next.lineCount
             )
         }
         return merged.sortedWith(compareBy<Segment> { it.top }.thenBy { it.left })
