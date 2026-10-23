@@ -16,6 +16,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -25,9 +27,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.cameratranslator.core.MainViewModel
@@ -38,6 +42,8 @@ import com.example.cameratranslator.translation.ModelStatus
 @Composable
 fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     var opacity by remember { mutableFloatStateOf(viewModel.overlayOpacity) }
+    var accessToken by remember { mutableStateOf("") }
+    var tokenFeedback by remember { mutableStateOf("") }
     val statuses by viewModel.modelStatuses.collectAsState()
     val languages = listOf(
         "zh" to "繁體中文",
@@ -62,6 +68,66 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         Text("翻譯框不透明度：" + (opacity * 100).toInt() + "%")
         Slider(value = opacity, onValueChange = { opacity = it }, valueRange = 0.35f..1f)
 
+        HorizontalDivider()
+        Text("雲端翻譯（Azure F0）", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "文字會經 Cloudflare Worker 傳送至 Azure，圖片不會上傳。Azure 金鑰只保存在 Worker，App 不包含 Azure 金鑰。",
+            style = MaterialTheme.typography.bodySmall
+        )
+        listOf(
+            "auto" to "自動：Wi-Fi 時雲端優先，行動網路用離線",
+            "cloud" to "雲端優先：有網路就嘗試雲端，失敗切離線",
+            "offline" to "僅離線：不傳送文字到雲端"
+        ).forEach { (code, label) ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = viewModel.translationMode == code,
+                    onClick = { viewModel.updateTranslationMode(code) }
+                )
+                Text(label, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Text(
+            if (viewModel.cloudTokenConfigured) "App 存取密鑰：已加密儲存"
+            else "App 存取密鑰：尚未設定，將使用離線模式",
+            style = MaterialTheme.typography.bodyMedium
+        )
+        OutlinedTextField(
+            value = accessToken,
+            onValueChange = { accessToken = it },
+            label = { Text("APP_ACCESS_TOKEN（至少 32 字）") },
+            supportingText = { Text("與 Cloudflare Worker Secret 使用相同內容，不是 Azure Key。") },
+            visualTransformation = PasswordVisualTransformation(),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                enabled = accessToken.length >= 32,
+                onClick = {
+                    tokenFeedback = if (viewModel.saveCloudToken(accessToken)) {
+                        accessToken = ""
+                        "密鑰已加密儲存"
+                    } else "儲存失敗，檢查長度、空白字元或手機安全設定"
+                }
+            ) { Text("儲存密鑰") }
+            OutlinedButton(onClick = {
+                viewModel.clearCloudToken()
+                accessToken = ""
+                tokenFeedback = "已清除"
+            }) { Text("清除") }
+        }
+        if (tokenFeedback.isNotBlank()) {
+            Text(tokenFeedback, style = MaterialTheme.typography.bodySmall)
+        }
+        Text(
+            "Worker 網址：https://camera-translator-api.jimmy0933.workers.dev\n" +
+                "如未在 Cloudflare 建立 APP_ACCESS_TOKEN Secret，Worker 會拒絕任何翻譯呼叫。",
+            style = MaterialTheme.typography.bodySmall
+        )
         HorizontalDivider()
         Text("離線語言模型", style = MaterialTheme.typography.titleLarge)
         Text(
@@ -137,11 +203,11 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             style = MaterialTheme.typography.bodySmall
         )
         HorizontalDivider()
-        Text("翻譯品質", style = MaterialTheme.typography.titleLarge)
+        Text("翻譯品質與用量", style = MaterialTheme.typography.titleLarge)
         Text(
-            "目前仍使用 ML Kit 離線翻譯，適合短句。長段文字、專有名詞與低品質 OCR 可能翻錯。" +
-                "若需要高品質線上翻譯，未來可使用 Google Cloud Translation 或 AI 翻譯服務；" +
-                "目前尚未接入付費雲端服務，也不會將 API 金鑰放入 APK。",
+            "已支援 Azure Translator F0 雲端翻譯。翻譯失敗時會改用已下載的 ML Kit 模型。" +
+                "OCR 同段落重複辨識會使用本機快取，仍請在 Azure 查看用量和額度；" +
+                "Cloudflare 單一 Worker 執行個體的限速不等於全域保證上限。",
             style = MaterialTheme.typography.bodySmall
         )
         Spacer(Modifier.height(12.dp))
