@@ -325,7 +325,6 @@ fun MainScreen(
                         }
                     ) { Text("分享圖片", color = Color.White) }
                 }
-                }
                 TextButton(
                     onClick = { showPhotoDetails = !showPhotoDetails }
                 ) {
@@ -333,6 +332,7 @@ fun MainScreen(
                         if (showPhotoDetails) "收合 OCR 修正" else "查看／修正 OCR 原文及譯文",
                         color = Color.White
                     )
+                }
                 }
                 if (showPhotoDetails) {
                     Column(
