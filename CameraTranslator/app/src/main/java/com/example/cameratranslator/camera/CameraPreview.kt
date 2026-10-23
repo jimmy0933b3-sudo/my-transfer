@@ -133,9 +133,8 @@ private fun extractLines(result: Text, selectedSource: String, script: String): 
         // Do not translate isolated words and partial line fragments on busy
         // pages: OCR may change these every frame and spam Azure/overlays.
         if (value.count { it.isLetter() } < 3) return@mapNotNull null
-        if (script == "en") {
-            val words = value.split(Regex("\\s+")).filter { it.any(Char::isLetter) }
-            if (latin < 9 || words.size < 2) return@mapNotNull null
+        if (script == "en" && !OcrLineQuality.acceptEnglish(value)) {
+            return@mapNotNull null
         }
         val language = if (selectedSource != "auto") selectedSource else when (script) {
             "ja" -> "ja"
