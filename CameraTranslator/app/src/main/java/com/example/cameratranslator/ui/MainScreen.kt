@@ -79,6 +79,8 @@ fun MainScreen(
     val textElements by viewModel.textElements.collectAsState()
     val status by viewModel.statusMessage.collectAsState()
     val actualEngine by viewModel.translationEngine.collectAsState()
+    val snapshotStatus by viewModel.snapshotStatus.collectAsState()
+    val snapshotLines by viewModel.snapshotLines.collectAsState()
     var paused by remember { mutableStateOf(viewModel.isPaused) }
     var showOriginal by remember { mutableStateOf(viewModel.showOriginal) }
     val clipboard = LocalClipboardManager.current
@@ -96,7 +98,67 @@ fun MainScreen(
                 Toast.makeText(context, "已複製文字", Toast.LENGTH_SHORT).show()
             }
         )
-        if (showOriginal) {
+        if (snapshotStatus != null) {
+            Column(
+                Modifier
+                    .align(Alignment.Center)
+                    .fillMaxSize()
+                    .padding(top = 242.dp, bottom = 16.dp, start = 10.dp, end = 10.dp)
+                    .background(Color(0xF50C2026), RoundedCornerShape(14.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp)
+            ) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("高解析度拍照翻譯", color = Color.White,
+                        style = MaterialTheme.typography.titleMedium)
+                    Button(onClick = viewModel::closeSnapshot) { Text("返回相機") }
+                }
+                Text(snapshotStatus.orEmpty(), color = Color.White,
+                    style = MaterialTheme.typography.bodySmall)
+                Text("先確認 OCR 原文是否正確；翻譯服務無法修正辨識錯字。",
+                    color = Color.White.copy(alpha = 0.78f),
+                    style = MaterialTheme.typography.bodySmall)
+                Column(
+                    Modifier.fillMaxWidth()
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    snapshotLines.forEachIndexed { i, line ->
+                        Column(
+                            Modifier.fillMaxWidth()
+                                .background(Color.White.copy(alpha = 0.09f),
+                                    RoundedCornerShape(9.dp))
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Text((i + 1).toString() + ". OCR 日文原文",
+                                color = Color(0xFFAACFE6),
+                                style = MaterialTheme.typography.labelMedium)
+                            Text(line.original, color = Color.White,
+                                style = MaterialTheme.typography.bodyMedium)
+                            Text(line.provider, color = Color(0xFF8FD5AC),
+                                style = MaterialTheme.typography.labelSmall)
+                            Text(line.translated ?: "尚未完成翻譯",
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodyMedium)
+                            TextButton(
+                                enabled = !line.translated.isNullOrBlank(),
+                                onClick = {
+                                    clipboard.setText(AnnotatedString(line.translated.orEmpty()))
+                                    Toast.makeText(context, "已複製譯文", Toast.LENGTH_SHORT).show()
+                                }
+                            ) { Text("複製譯文") }
+                        }
+                    }
+                }
+            }
+        }
+        if (showOriginal && snapshotStatus == null) {
             Column(
                 Modifier.align(Alignment.BottomCenter)
                     .fillMaxWidth()
@@ -182,7 +244,7 @@ fun MainScreen(
                 style = MaterialTheme.typography.labelSmall
             )
         }
-        if (status != null && !paused) {
+        if (status != null && !paused && snapshotStatus == null) {
             Text(
                 status.orEmpty(),
                 color = Color.White,
@@ -203,7 +265,13 @@ fun MainScreen(
                     .padding(horizontal = 12.dp, vertical = 6.dp)
             )
         }
-        Row(
+        if (snapshotStatus == null) {
+            Button(
+                onClick = { viewModel.captureSnapshot(context) },
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 94.dp)
+            ) { Text("拍照精準翻譯") }
+        }
+        if (snapshotStatus == null) Row(
             Modifier.align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 20.dp),
