@@ -30,7 +30,6 @@ import com.example.cameratranslator.core.MainViewModel
 import com.example.cameratranslator.core.PhotoTranslationExport
 import com.example.cameratranslator.core.SnapshotOcrClipboard
 import com.example.cameratranslator.core.SnapshotTranslationLine
-import com.example.cameratranslator.overlay.TranslationOverlay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -154,9 +153,6 @@ fun MainScreen(
     onNavigateToPicker: () -> Unit,
     onNavigateToSettings: () -> Unit
 ) {
-    val textElements by viewModel.textElements.collectAsState()
-    val status by viewModel.statusMessage.collectAsState()
-    val actualEngine by viewModel.translationEngine.collectAsState()
     val snapshotStatus by viewModel.snapshotStatus.collectAsState()
     val snapshotLines by viewModel.snapshotLines.collectAsState()
     val originalPhoto by viewModel.snapshotOriginalPhoto.collectAsState()
@@ -191,16 +187,6 @@ fun MainScreen(
         // can interrupt takePicture before the JPEG has finished saving.
         CameraPreviewScreen(viewModel)
         if (snapshotStatus == null) {
-            TranslationOverlay(
-                textElements = textElements,
-                showOriginal = false,
-                paused = false,
-                opacity = viewModel.overlayOpacity,
-                onCopy = { value ->
-                    clipboard.setText(AnnotatedString(value))
-                    Toast.makeText(context, "已複製翻譯", Toast.LENGTH_SHORT).show()
-                }
-            )
 
             Column(
                 Modifier.align(Alignment.TopCenter).fillMaxWidth()
@@ -232,21 +218,13 @@ fun MainScreen(
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(7.dp).clip(CircleShape)
-                        .background(if (actualEngine != null) Mint else Color(0xFFFFD38C)))
+                        .background(Mint))
                     Spacer(Modifier.width(7.dp))
                     Text(
-                        actualEngine ?: "準備辨識 · 對準文字",
-                        color = Color.White.copy(alpha = 0.87f),
+                        "純拍照翻譯 · 不會在預覽時辨識或上傳文字",
+                        color = Color.White.copy(alpha = 0.9f),
                         style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        if (viewModel.sourceLanguage == "th") "泰文使用拍照辨識"
-                        else "已辨識 " + textElements.size + " 段",
-                        color = Color.White.copy(alpha = 0.72f),
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1
+                        maxLines = 2
                     )
                 }
             }
@@ -260,20 +238,7 @@ fun MainScreen(
                     .padding(top = 36.dp, start = 22.dp, end = 22.dp, bottom = 18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                if (status != null && status != "請對準英文、日文或中文字") {
-                    Text(
-                        status.orEmpty(),
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .padding(bottom = 13.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0xCC243845))
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                    )
-                }
+
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -302,7 +267,7 @@ fun MainScreen(
                             Text("文", fontSize = 22.sp, color = Mint)
                         }
                         Spacer(Modifier.height(4.dp))
-                        Text("原位替字", color = Color.White.copy(alpha = 0.76f),
+                        Text("拍完再翻譯", color = Color.White.copy(alpha = 0.76f),
                             fontSize = 12.sp)
                     }
                 }
