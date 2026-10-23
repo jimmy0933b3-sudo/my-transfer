@@ -128,8 +128,8 @@ private fun extractLines(result: Text, selectedSource: String, script: String): 
         if (selectedSource == "auto") {
             val belongs = when (script) {
                 "ja" -> kana >= 2 && kana >= han / 3
-                "zh" -> han >= 2 && kana == 0 &&
-                    han.toFloat() / (han + latin).coerceAtLeast(1) >= 0.66f
+                "zh" -> han >= 3 && kana == 0 &&
+                    han.toFloat() / (han + latin).coerceAtLeast(1) >= 0.80f
                 else -> latin >= 2 && han == 0 && kana == 0
             }
             if (!belongs) return@mapNotNull null
