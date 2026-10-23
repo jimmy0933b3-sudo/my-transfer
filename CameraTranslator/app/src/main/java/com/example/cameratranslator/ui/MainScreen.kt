@@ -119,6 +119,7 @@ fun MainScreen(
                 }
                 Text(snapshotStatus.orEmpty(), color = Color.White,
                     style = MaterialTheme.typography.bodySmall)
+                Text("支援英文／日文／中文／泰文。泰文首次拍照會下載約 1 MB 模型；即時相機不支援泰文 OCR。", color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.bodySmall)
                 Text("先確認 OCR 原文是否正確；翻譯服務無法修正辨識錯字。",
                     color = Color.White.copy(alpha = 0.78f),
                     style = MaterialTheme.typography.bodySmall)
@@ -136,7 +137,14 @@ fun MainScreen(
                                 .padding(10.dp),
                             verticalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
-                            Text((i + 1).toString() + ". OCR 日文原文",
+                            val ocrLanguage = when (viewModel.sourceLanguage) {
+                                "en" -> "英文"
+                                "ja" -> "日文"
+                                "zh" -> "中文"
+                                "th" -> "泰文"
+                                else -> "自動辨識"
+                            }
+                            Text((i + 1).toString() + ". OCR " + ocrLanguage + "原文",
                                 color = Color(0xFFAACFE6),
                                 style = MaterialTheme.typography.labelMedium)
                             Text(line.original, color = Color.White,
