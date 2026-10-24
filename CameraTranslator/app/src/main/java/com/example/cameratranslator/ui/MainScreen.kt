@@ -153,7 +153,9 @@ private fun RowScope.PhotoAction(
 fun MainScreen(
     viewModel: MainViewModel,
     onNavigateToPicker: () -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    cameraPermissionGranted: Boolean,
+    onRequestCameraPermission: () -> Unit
 ) {
     val snapshotStatus by viewModel.snapshotStatus.collectAsState()
     val snapshotLines by viewModel.snapshotLines.collectAsState()
@@ -188,7 +190,20 @@ fun MainScreen(
     Box(Modifier.fillMaxSize().background(Night)) {
         // Keep CameraX bound during photo capture. Unmounting camera here
         // can interrupt takePicture before the JPEG has finished saving.
-        CameraPreviewScreen(viewModel)
+        if (cameraPermissionGranted) {
+            CameraPreviewScreen(viewModel)
+        } else if (snapshotStatus == null) {
+            Column(
+                Modifier.fillMaxSize().padding(horizontal = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text("尚未授權相機", color = Color.White, fontSize = 18.sp)
+                Text("仍可從相簿選擇照片翻譯", color = Muted, fontSize = 13.sp)
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = onRequestCameraPermission) { Text("開啟相機權限") }
+            }
+        }
         if (snapshotStatus == null) {
 
             Column(
@@ -260,7 +275,10 @@ fun MainScreen(
                         Text("相簿", color = Color.White, fontSize = 12.sp)
                     }
                     Spacer(Modifier.weight(1f))
-                    CameraShutter(onClick = { viewModel.captureSnapshot(context) })
+                    CameraShutter(onClick = {
+                        if (cameraPermissionGranted) viewModel.captureSnapshot(context)
+                        else onRequestCameraPermission()
+                    })
                     Spacer(Modifier.weight(1f))
                     // Match the album slot to keep the shutter perfectly centered.
                     // The former "文／拍完再翻譯" decoration was not a real action.
