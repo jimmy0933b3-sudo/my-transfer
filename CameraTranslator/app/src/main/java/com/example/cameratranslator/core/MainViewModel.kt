@@ -535,6 +535,10 @@ class MainViewModel @Inject constructor(
         val result = _snapshotLines.value.toMutableList()
         var translatedCount = 0
         var rejectedCount = 0
+        var cloudQualityFailedCount = 0
+        var offlineFallbackAttempted = 0
+        var offlineFallbackRecovered = 0
+        var offlineFallbackUnavailable = 0
         // Only fixed category IDs are logged, never scanned words or translated text.
         val qualityReasonCounts = linkedMapOf<String, Int>()
         fun trackReject(stage: String, reason: String) {
@@ -638,21 +642,30 @@ class MainViewModel @Inject constructor(
                 }
             }
             ensureCurrentPhoto(requestId)
-            val translationProblem = translated?.let {
-                PhotoTranslationQuality.rejectTranslation(
-                    original, it, block.sourceLanguage, requestedTarget
+            val resolved = PhotoTranslationRecovery.resolve(
+                original = original,
+                source = block.sourceLanguage,
+                target = requestedTarget,
+                translation = translated,
+                provider = provider,
+                offlineReady = translator.isReadyFor(block.sourceLanguage, requestedTarget)
+            ) {
+                translator.translate(
+                    original.take(1500), block.sourceLanguage, requestedTarget
                 )
             }
-            val acceptedText = translated?.takeIf { translationProblem == null }
-            if (translationProblem != null) {
+            ensureCurrentPhoto(requestId)
+            if (resolved.cloudQualityFailed) cloudQualityFailedCount++
+            if (resolved.offlineAttempted) offlineFallbackAttempted++
+            if (resolved.recovered) offlineFallbackRecovered++
+            if (resolved.offlineUnavailable) offlineFallbackUnavailable++
+            if (resolved.rejectionReason != null) {
                 rejectedCount++
-                trackReject("translation", translationProblem)
+                trackReject("translation", resolved.rejectionReason)
             }
-            if (!acceptedText.isNullOrBlank()) translatedCount++
+            if (!resolved.translated.isNullOrBlank()) translatedCount++
             result[i] = result[i].copy(
-                translated = acceptedText,
-                provider = if (translationProblem != null)
-                    "保留原字：" + translationProblem else provider
+                translated = resolved.translated, provider = resolved.provider
             )
             _snapshotLines.value = result.toList()
         }
@@ -681,7 +694,11 @@ class MainViewModel @Inject constructor(
             composited.skipReasons.entries.joinToString { it.key + "=" + it.value })
         DiagnosticLog.record("QUALITY", "保留原文=" + rejectedCount +
             "；原因分類=" +
-            qualityReasonCounts.entries.joinToString { it.key + "=" + it.value })
+            qualityReasonCounts.entries.joinToString { it.key + "=" + it.value } +
+            "；雲端品質不合格=" + cloudQualityFailedCount +
+            "；離線重試=" + offlineFallbackAttempted +
+            "；離線救回=" + offlineFallbackRecovered +
+            "；離線模型未就緒=" + offlineFallbackUnavailable)
         if (mode == "mobile_v5" || mode == "mobile_v6") {
             photoComparison = photoComparison + (mode to
                 ("有效辨識 " + selected.size + " 段，翻譯 " + translatedCount +
@@ -698,7 +715,12 @@ class MainViewModel @Inject constructor(
             selected.size + " 段，翻譯 " +
             translatedCount + " 段，照片替字 " + composited.placed +
             " 段；另有 " + composited.unchanged + " 段與原文相同，不需替換。" +
-            "品質檢查保留原字 " + rejectedCount + " 段。" + if (composited.skipped > 0)
+            "品質檢查保留原字 " + rejectedCount + " 段。" +
+            (if (offlineFallbackRecovered > 0) {
+                " 雲端譯文未通過檢查，離線翻譯救回 " + offlineFallbackRecovered + " 段。"
+            } else if (offlineFallbackUnavailable > 0) {
+                " 部分雲端譯文不可靠；可到設定下載來源語言與目標語言的離線翻譯模型以啟用備援。"
+            } else "") + if (composited.skipped > 0)
                 " 有 " + composited.skipped + " 段因座標或字數問題未替換，可查看文字明細。" else ""
     }
 

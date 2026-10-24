@@ -20,6 +20,21 @@ class PhotoOcrLanguagesTest {
         assertFalse(PhotoOcrLanguages.containsThai("你好世界"))
     }
 
+    @Test fun manuallySelectedJapaneseRecognizesEnglishLabels() {
+        val expected = listOf("ACME PRODUCT", "Playbook", "ABC-123")
+        expected.forEach { label ->
+            org.junit.Assert.assertEquals(
+                "en", PhotoOcrLanguages.resolveBlockSource(label, "ja", "en")
+            )
+        }
+        org.junit.Assert.assertEquals(
+            "ja", PhotoOcrLanguages.resolveBlockSource("商品説明", "ja", "zh")
+        )
+        org.junit.Assert.assertEquals(
+            "ja", PhotoOcrLanguages.resolveBlockSource("商品 Playbook", "ja", "ja")
+        )
+    }
+
     @Test fun englishInsideJapanesePhotoKeepsEnglishSource() {
         org.junit.Assert.assertEquals(
             "en", PhotoOcrLanguages.resolveBlockSource("Playbook", "ja", "en")
