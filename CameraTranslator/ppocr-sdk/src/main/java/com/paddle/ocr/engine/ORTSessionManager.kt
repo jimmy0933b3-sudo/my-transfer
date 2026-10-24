@@ -43,15 +43,13 @@ class ORTSessionManager(
         }
         try {
             val ortEnv = env ?: throw OCRError.ModelLoadFailed("OCR", Exception("Environment not initialized"))
-            val detBytes = readModelAsset(detAssetPath)
-            val recBytes = readModelAsset(recAssetPath)
             try {
-                detSession = ortEnv.createSession(detBytes, opts)
+                detSession = createModelSession(ortEnv, detAssetPath, opts)
             } catch (t: Throwable) {
                 throw OCRError.ModelLoadFailed("detection", t)
             }
             try {
-                recSession = ortEnv.createSession(recBytes, opts)
+                recSession = createModelSession(ortEnv, recAssetPath, opts)
             } catch (t: Throwable) {
                 detSession?.close()
                 detSession = null
@@ -101,6 +99,19 @@ class ORTSessionManager(
                 recSession = null
                 env = null
             }
+        }
+    }
+
+    /** Avoid loading both ~10–20 MB models into Java heap at the same time.
+     * ONNX Runtime can mmap models downloaded to private absolute file paths.
+     */
+    private fun createModelSession(
+        environment: OrtEnvironment, path: String, opts: OrtSession.SessionOptions
+    ): OrtSession {
+        return if (java.io.File(path).isAbsolute) {
+            environment.createSession(path, opts)
+        } else {
+            environment.createSession(readModelAsset(path), opts)
         }
     }
 

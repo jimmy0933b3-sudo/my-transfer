@@ -2,6 +2,9 @@ package com.example.cameratranslator.ocr
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.util.Log
+import com.example.cameratranslator.core.PhotoOrientationRanking
+import kotlinx.coroutines.CancellationException
 import android.graphics.Rect
 import androidx.camera.core.ImageProxy
 import com.example.cameratranslator.core.models.TextElement
@@ -75,6 +78,60 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
      * Postprocess only captured photos: keep original per-block coordinates
      * for correct image replacement while joining closely stacked fragments.
      */
+    /**
+     * EXIF alone cannot fix every sideways JPEG. Compare ML Kit's readable
+     * horizontal text evidence on a small preview; keep ambiguous photos as-is.
+     */
+    suspend fun suggestUprightRotation(bitmap: Bitmap, selectedSource: String): Int {
+        if (bitmap.width < bitmap.height * 1.17f) return 0
+        val maxEdge = max(bitmap.width, bitmap.height)
+        val preview = if (maxEdge > 960) {
+            val scale = 960f / maxEdge
+            Bitmap.createScaledBitmap(
+                bitmap, (bitmap.width * scale).toInt().coerceAtLeast(1),
+                (bitmap.height * scale).toInt().coerceAtLeast(1), true
+            )
+        } else bitmap
+        val recognizer = when (selectedSource) {
+            "en" -> latin
+            "zh" -> chinese
+            else -> japanese
+        }
+        try {
+            val scores = mutableMapOf<Int, PhotoOrientationRanking.Evidence>()
+            for (rotation in listOf(0, 90, 270)) {
+                val text = try {
+                    recognizer.process(InputImage.fromBitmap(preview, rotation)).await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("CameraTranslator", "Photo orientation sample failed", e)
+                    return 0
+                }
+                val lines = text.textBlocks.flatMap { it.lines }
+                scores[rotation] = PhotoOrientationRanking.Evidence(
+                    readableCharacters = lines.sumOf { line ->
+                        line.text.count { it.isLetterOrDigit() }.coerceAtMost(60)
+                    },
+                    horizontalLines = lines.count { line ->
+                        val box = line.boundingBox
+                        box != null && box.width() > box.height() * 1.45f
+                    },
+                    verticalLines = lines.count { line ->
+                        val box = line.boundingBox
+                        box != null && box.height() > box.width() * 1.20f
+                    }
+                )
+            }
+            val chosen = PhotoOrientationRanking.choose(scores)
+            Log.i("CameraTranslator", "Photo orientation suggestion: " +
+                chosen + "; scores=" + scores)
+            return chosen
+        } finally {
+            if (preview !== bitmap) preview.recycle()
+        }
+    }
+
     private fun mergePhotoParagraphs(elements: List<TextElement>): List<TextElement> {
         if (elements.isEmpty()) return elements
         val segments = elements.mapIndexedNotNull { index, element ->

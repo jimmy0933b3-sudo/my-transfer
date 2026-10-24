@@ -79,17 +79,18 @@ class MainViewModel @Inject constructor(
             .edit().putString("photo_ocr_mode", value).apply()
     }
 
-    fun downloadMobileOcr(versionId: String) {
+    fun downloadMobileOcr(versionId: String, force: Boolean = false) {
         val version = PaddleMobileModelStore.Version.fromId(versionId) ?: return
         if (mobileModelStatuses[version.name]?.contains("下載中") == true) return
         viewModelScope.launch {
             mobileModelStatuses = mobileModelStatuses + (version.name to "下載中…")
-            val installed = mobileStore.download(version) { progress ->
+            if (force) mobileOcr.release()
+            val installed = mobileStore.download(version, { progress ->
                 viewModelScope.launch(Dispatchers.Main.immediate) {
                     mobileModelStatuses = mobileModelStatuses +
                         (version.name to ("下載中：" + progress))
                 }
-            }
+            }, force = force)
             mobileModelStatuses = mobileModelStatuses + (version.name to
                 if (installed) "已下載（可離線辨識）" else "下載失敗（可按鈕重試）")
         }
@@ -102,6 +103,8 @@ class MainViewModel @Inject constructor(
     )
         private set
     var actualPhotoOcrEngine by mutableStateOf("尚未拍照")
+        private set
+    var photoOcrDiagnostics by mutableStateOf("尚未執行 OCR")
         private set
 
     fun setPaddleOcrPreference(enabled: Boolean) {
@@ -291,8 +294,30 @@ class MainViewModel @Inject constructor(
         _snapshotOriginalPhoto.value = null
         _snapshotTranslatedPhoto.value = null
         actualPhotoOcrEngine = "尚未拍照"
+        photoOcrDiagnostics = "尚未執行 OCR"
         isPaused = false
         resetRecognitions()
+    }
+
+    /** Rotate both full-quality photos and OCR boxes, not only the preview.
+     * Available after processing so corrections, save and share remain aligned.
+     */
+    fun rotateSnapshotClockwise() {
+        val source = _snapshotOriginalPhoto.value ?: return
+        val translated = _snapshotTranslatedPhoto.value ?: return
+        val turnedSource = PhotoBitmapRotation.rotate(source, 90)
+        val turnedTranslated = PhotoBitmapRotation.rotate(translated, 90)
+        capturedSnapshotElements = capturedSnapshotElements.map { element ->
+            element.copy(
+                boundingBox = PhotoBitmapRotation.clockwise(
+                    element.boundingBox, source.height
+                ),
+                imageWidth = source.height,
+                imageHeight = source.width
+            )
+        }
+        _snapshotOriginalPhoto.value = turnedSource
+        _snapshotTranslatedPhoto.value = turnedTranslated
     }
 
     fun captureSnapshot(context: Context) {
@@ -367,11 +392,16 @@ class MainViewModel @Inject constructor(
      * pass one real still bitmap through the same full-resolution flow, then
      * rasterize translated text at real OCR coordinates.
      */
-    private suspend fun translatePhoto(bitmap: Bitmap, requestId: Long) {
+    private suspend fun translatePhoto(inputBitmap: Bitmap, requestId: Long) {
         ensureCurrentPhoto(requestId)
         val requestedSource = sourceLanguage
         val requestedTarget = targetLanguage
+        _snapshotStatus.value = "正在確認照片與文字方向…"
+        val rotation = photoOcr.suggestUprightRotation(inputBitmap, requestedSource)
+        ensureCurrentPhoto(requestId)
+        val bitmap = PhotoBitmapRotation.rotate(inputBitmap, rotation)
         _snapshotOriginalPhoto.value = bitmap
+        photoOcrDiagnostics = "辨識前校正：照片旋轉 " + rotation + "°"
         // Photo OCR is independent of translation selection. In offline mode
         // ONNX Runtime never contacts the Azure Worker or uploads the photo.
         val mode = photoOcrMode
@@ -382,18 +412,40 @@ class MainViewModel @Inject constructor(
         }
         val mobileReady = version != null && mobileStore.ready(version) &&
             requestedSource != "th" // official Paddle mobile v5/v6 does not OCR Thai
+        photoOcrDiagnostics = when {
+            mode == "mlkit" -> "設定為使用 ML Kit"
+            version != null && !mobileStore.ready(version) ->
+                version.label + " 模型未安裝或不完整，請到設定下載／重新下載"
+            version != null && requestedSource == "th" ->
+                "Paddle Mobile 未支援泰文，使用泰文專用辨識"
+            mode == "cloud_v5" -> "設定為 Paddle 雲端 OCR"
+            mobileReady -> version!!.label + " 模型已安裝，開始手機端辨識"
+            else -> "目前使用 ML Kit"
+        }
         if (mobileReady) {
             _snapshotStatus.value = "正在使用 " + version!!.label + " 手機離線辨識…"
         }
         val localPaddle = if (mobileReady) {
             try {
-                mobileOcr.recognize(bitmap, requestedSource, version!!)
+                mobileOcr.recognize(bitmap, requestedSource, version!!).also {
+                    photoOcrDiagnostics = mobileOcr.lastDiagnostic
+                }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w("CameraTranslator", "Local PaddleOCR failed", e)
-                _snapshotStatus.value = version!!.label + " 失敗，轉用 ML Kit…"
+                photoOcrDiagnostics = version!!.label + " 模型推論異常：" +
+                    e.javaClass.simpleName + "：" + (e.message ?: "未知錯誤").take(180) +
+                    "；已退回 ML Kit，可到設定重新下載模型"
+                _snapshotStatus.value = version.label + " 失敗，轉用 ML Kit…"
                 null
             }
         } else null
+        if (mobileReady && localPaddle.isNullOrEmpty() &&
+            !photoOcrDiagnostics.contains("異常")) {
+            photoOcrDiagnostics = mobileOcr.lastDiagnostic +
+                "；本張照片沒有通過有效文字條件，已退回 ML Kit"
+        }
         val usePaddleCloud = mode == "cloud_v5" && cloudTokenConfigured &&
             translationMode != "offline" && shouldTryCloud()
         val cloudPaddle = if (localPaddle.isNullOrEmpty() && usePaddleCloud)
@@ -407,6 +459,8 @@ class MainViewModel @Inject constructor(
             }
             !cloudPaddle.isNullOrEmpty() -> {
                 actualPhotoOcrEngine = "PP-OCRv5 雲端"
+                photoOcrDiagnostics = "Paddle 雲端辨識 " +
+                    cloudPaddle.size + " 段文字"
                 cloudPaddle
             }
             else -> {
