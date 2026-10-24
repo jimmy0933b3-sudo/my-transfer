@@ -564,7 +564,17 @@ class MainViewModel @Inject constructor(
                         reviewNeeded++
                         block.copy(ocrReviewNeeded = true)
                     }
-                    else -> block
+                    else -> {
+                        // A very low-confidence Japanese reading without an
+                        // independent usable match must not overwrite source
+                        // pixels with a plausible-looking mistranslation.
+                        if (block.sourceLanguage == "ja" &&
+                            (block.ocrConfidence ?: 1f) < 0.32f &&
+                            decision?.similarity == null) {
+                            reviewNeeded++
+                            block.copy(ocrReviewNeeded = true)
+                        } else block
+                    }
                 }
                 val position = box?.let {
                     "(" + it.left + "," + it.top + "," + it.right + "," +
