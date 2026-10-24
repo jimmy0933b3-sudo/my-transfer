@@ -83,7 +83,8 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
      * horizontal text evidence on a small preview; keep ambiguous photos as-is.
      */
     suspend fun suggestUprightRotation(bitmap: Bitmap, selectedSource: String): Int {
-        if (bitmap.width < bitmap.height * 1.17f) return 0
+        // Image dimensions describe camera sensor layout, not how the text
+        // is oriented. Portrait photos frequently contain sideways labels.
         val maxEdge = max(bitmap.width, bitmap.height)
         val preview = if (maxEdge > 960) {
             val scale = 960f / maxEdge
@@ -99,7 +100,7 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
         }
         try {
             val scores = mutableMapOf<Int, PhotoOrientationRanking.Evidence>()
-            for (rotation in listOf(0, 90, 270)) {
+            for (rotation in listOf(0, 90, 180, 270)) {
                 val text = try {
                     recognizer.process(InputImage.fromBitmap(preview, rotation)).await()
                 } catch (e: CancellationException) {
