@@ -22,7 +22,9 @@ internal object PhotoTranslationRenderer {
         val bitmap: Bitmap,
         val placed: Int,
         val skipped: Int,
-        val skipReasons: Map<String, Int> = emptyMap()
+        val skipReasons: Map<String, Int> = emptyMap(),
+        /** Translations identical to OCR text require no pixel replacement. */
+        val unchanged: Int = 0
     )
 
     fun compose(original: Bitmap, lines: List<Pair<TextElement, String>>): Result {
@@ -31,6 +33,7 @@ internal object PhotoTranslationRenderer {
         val canvas = Canvas(output)
         var placed = 0
         var skipped = 0
+        var unchanged = 0
         val skipReasons = linkedMapOf<String, Int>()
         fun skip(reason: String) {
             skipped++
@@ -41,8 +44,11 @@ internal object PhotoTranslationRenderer {
         // overlay is added to the exported or shared photo.
         for ((element, translated) in lines) {
             val box = element.boundingBox
-            if (translated.isBlank() ||
-                translated.trim() == element.originalText.trim()) continue
+            if (translated.isBlank()) continue
+            if (translated.trim() == element.originalText.trim()) {
+                unchanged++
+                continue
+            }
             if (box == null) {
                 skip("沒有文字座標")
                 continue
@@ -115,7 +121,7 @@ internal object PhotoTranslationRenderer {
             occupied.add(Rect(rect))
             placed++
         }
-        return Result(output, placed, skipped, skipReasons)
+        return Result(output, placed, skipped, skipReasons, unchanged)
     }
 
     fun isUsableRect(rect: Rect, width: Int, height: Int): Boolean {

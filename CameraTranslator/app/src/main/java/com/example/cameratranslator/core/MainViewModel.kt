@@ -535,6 +535,12 @@ class MainViewModel @Inject constructor(
         val result = _snapshotLines.value.toMutableList()
         var translatedCount = 0
         var rejectedCount = 0
+        // Only fixed category IDs are logged, never scanned words or translated text.
+        val qualityReasonCounts = linkedMapOf<String, Int>()
+        fun trackReject(stage: String, reason: String) {
+            val code = PhotoTranslationRejectionReason.code(reason, stage)
+            qualityReasonCounts[code] = (qualityReasonCounts[code] ?: 0) + 1
+        }
         val translateStart = SystemClock.elapsedRealtime()
         // Translate up to 18 valid blocks per photo in small parallel waves.
         // The Worker allows 25 requests/minute/IP; use a conservative budget.
@@ -588,6 +594,7 @@ class MainViewModel @Inject constructor(
             )
             if (ocrProblem != null) {
                 rejectedCount++
+                trackReject("ocr", ocrProblem)
                 result[i] = result[i].copy(
                     translated = null, provider = "保留原字：" + ocrProblem
                 )
@@ -637,7 +644,10 @@ class MainViewModel @Inject constructor(
                 )
             }
             val acceptedText = translated?.takeIf { translationProblem == null }
-            if (translationProblem != null) rejectedCount++
+            if (translationProblem != null) {
+                rejectedCount++
+                trackReject("translation", translationProblem)
+            }
             if (!acceptedText.isNullOrBlank()) translatedCount++
             result[i] = result[i].copy(
                 translated = acceptedText,
@@ -665,8 +675,13 @@ class MainViewModel @Inject constructor(
         ensureCurrentPhoto(requestId)
         _snapshotTranslatedPhoto.value = composited.bitmap
         DiagnosticLog.record("RENDER", "照片替字耗時=" +
-            (SystemClock.elapsedRealtime() - renderStart) + "ms；跳過原因=" +
+            (SystemClock.elapsedRealtime() - renderStart) + "ms；實際替換=" +
+            composited.placed + "；同原文無須替換=" + composited.unchanged +
+            "；跳過原因=" +
             composited.skipReasons.entries.joinToString { it.key + "=" + it.value })
+        DiagnosticLog.record("QUALITY", "保留原文=" + rejectedCount +
+            "；原因分類=" +
+            qualityReasonCounts.entries.joinToString { it.key + "=" + it.value })
         if (mode == "mobile_v5" || mode == "mobile_v6") {
             photoComparison = photoComparison + (mode to
                 ("有效辨識 " + selected.size + " 段，翻譯 " + translatedCount +
@@ -676,13 +691,14 @@ class MainViewModel @Inject constructor(
         DiagnosticLog.record("PERF", "照片處理總耗時=" +
             (SystemClock.elapsedRealtime() - totalStart) + "ms")
         DiagnosticLog.record("PHOTO", "完成：OCR=" + actualPhotoOcrEngine +
-            "；辨識=" + selected.size + "；翻譯=" + translatedCount +
-            "；替換=" + composited.placed + "；保留=" + rejectedCount +
-            "；跳過=" + composited.skipped)
+            "；辨識=" + selected.size + "；有效譯文=" + translatedCount +
+            "；替換=" + composited.placed + "；同原文=" + composited.unchanged +
+            "；品質保留=" + rejectedCount + "；替字跳過=" + composited.skipped)
         _snapshotStatus.value = actualPhotoOcrEngine + "。已辨識 " +
             selected.size + " 段，翻譯 " +
             translatedCount + " 段，照片替字 " + composited.placed +
-            " 段。品質檢查保留原字 " + rejectedCount + " 段。" + if (composited.skipped > 0)
+            " 段；另有 " + composited.unchanged + " 段與原文相同，不需替換。" +
+            "品質檢查保留原字 " + rejectedCount + " 段。" + if (composited.skipped > 0)
                 " 有 " + composited.skipped + " 段因座標或字數問題未替換，可查看文字明細。" else ""
     }
 
