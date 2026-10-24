@@ -546,9 +546,11 @@ class MainViewModel @Inject constructor(
             qualityReasonCounts[code] = (qualityReasonCounts[code] ?: 0) + 1
         }
         val translateStart = SystemClock.elapsedRealtime()
-        // Translate up to 18 valid blocks per photo in small parallel waves.
-        // The Worker allows 25 requests/minute/IP; use a conservative budget.
-        // Later blocks use offline translation, preserving original order.
+        // Azure translates independent OCR blocks in bounded batches of six.
+        // This avoids the old 18-block cap without multiplying Worker requests.
+        // Fall back to 18 individual requests while an older Worker is deployed.
+        // A batch is always homogeneous in its source language; never join
+        // different OCR blocks into one raw string (loses text alignment).
         val cloudResults = mutableMapOf<Int, String>()
         val cloudEligible = if (shouldTryCloud()) selected.indices.filter { index ->
             val block = selected[index]
@@ -558,37 +560,119 @@ class MainViewModel @Inject constructor(
                 PhotoTranslationQuality.rejectOcr(original, block.sourceLanguage) == null &&
                 !PhotoBrandPolicy.shouldPreserve(original, block.sourceLanguage, requestedSource) &&
                 photoGlossary.lookup(original, block.sourceLanguage, requestedTarget) == null
-        }.take(18) else emptyList()
+        } else emptyList()
         if (cloudEligible.isNotEmpty()) {
             val credential = cloudCredentials.load().orEmpty()
-            var cloudHealthy = true
-            var completed = 0
-            for (wave in cloudEligible.chunked(3)) {
-                ensureCurrentPhoto(requestId)
-                if (!cloudHealthy) break
-                _snapshotStatus.value = "雲端翻譯中 " + completed + "/" +
-                    cloudEligible.size + " 段…"
-                val responses = coroutineScope {
-                    wave.map { index ->
-                        async(Dispatchers.IO) {
-                            val block = selected[index]
-                            cloudTranslator.translate(
-                                block.originalText.trim().take(1500),
-                                block.sourceLanguage, requestedTarget, credential
-                            )
+            val groups = PhotoCloudBatchPlanner.plan(cloudEligible) {
+                selected[it].sourceLanguage
+            }
+            var httpRequests = 0
+            var batchRequests = 0
+            var legacyRequests = 0
+            var batchMode = "待確認"
+            fun collectBatch(group: List<Int>, translations: List<String>) {
+                group.zip(translations).forEach { (index, value) ->
+                    if (value.isNotBlank()) cloudResults[index] = value
+                }
+            }
+            val first = groups.first()
+            val firstBlock = selected[first.first()]
+            val probe = cloudTranslator.translateBatch(
+                first.map { selected[it].originalText.trim().take(1500) },
+                firstBlock.sourceLanguage, requestedTarget, credential
+            )
+            httpRequests++
+            batchRequests++
+            ensureCurrentPhoto(requestId)
+            when (probe) {
+                is CloudTranslationProvider.BatchResult.Success -> {
+                    batchMode = "批次"
+                    collectBatch(first, probe.translations)
+                    var processed = first.size
+                    var batchHealthy = true
+                    for (wave in groups.drop(1).chunked(3)) {
+                        if (!batchHealthy) break
+                        ensureCurrentPhoto(requestId)
+                        _snapshotStatus.value = "雲端批次翻譯中 " + processed +
+                            "/" + cloudEligible.size + " 段…"
+                        val responses = coroutineScope {
+                            wave.map { group ->
+                                async(Dispatchers.IO) {
+                                    cloudTranslator.translateBatch(
+                                        group.map {
+                                            selected[it].originalText.trim().take(1500)
+                                        },
+                                        selected[group.first()].sourceLanguage,
+                                        requestedTarget, credential
+                                    )
+                                }
+                            }.awaitAll()
                         }
-                    }.awaitAll()
+                        ensureCurrentPhoto(requestId)
+                        httpRequests += wave.size
+                        batchRequests += wave.size
+                        responses.forEachIndexed { position, answer ->
+                            if (answer is CloudTranslationProvider.BatchResult.Success) {
+                                collectBatch(wave[position], answer.translations)
+                            } else {
+                                batchHealthy = false
+                            }
+                        }
+                        processed += wave.sumOf { it.size }
+                    }
                 }
-                ensureCurrentPhoto(requestId)
-                for ((position, answer) in responses.withIndex()) {
-                    if (!answer.isNullOrBlank()) cloudResults[wave[position]] = answer
-                    else cloudHealthy = false
+                CloudTranslationProvider.BatchResult.Unsupported -> {
+                    batchMode = "相容單筆"
+                    // Deployed Worker lacks /translate-batch (HTTP 404).
+                    // Keep the legacy request cap and concurrency while
+                    // remaining backwards-compatible with production.
+                    val fallback = cloudEligible.take(18)
+                    var legacyHealthy = true
+                    var completed = 0
+                    for (wave in fallback.chunked(3)) {
+                        if (!legacyHealthy) break
+                        ensureCurrentPhoto(requestId)
+                        _snapshotStatus.value = "雲端翻譯中 " + completed +
+                            "/" + fallback.size + " 段…"
+                        val responses = coroutineScope {
+                            wave.map { index ->
+                                async(Dispatchers.IO) {
+                                    val block = selected[index]
+                                    cloudTranslator.translate(
+                                        block.originalText.trim().take(1500),
+                                        block.sourceLanguage, requestedTarget, credential
+                                    )
+                                }
+                            }.awaitAll()
+                        }
+                        ensureCurrentPhoto(requestId)
+                        httpRequests += wave.size
+                        legacyRequests += wave.size
+                        responses.forEachIndexed { position, answer ->
+                            if (!answer.isNullOrBlank()) {
+                                cloudResults[wave[position]] = answer
+                            } else {
+                                legacyHealthy = false
+                            }
+                        }
+                        completed += wave.size
+                    }
                 }
-                completed += wave.size
+                CloudTranslationProvider.BatchResult.Unavailable -> {
+                    // Avoid doubling the upstream request count on a Worker
+                    // error or rate limit; the original offline fallback still
+                    // handles these blocks without repainting bad text.
+                    batchMode = "批次服務暫不可用，保留離線備援"
+                }
             }
             DiagnosticLog.record("PERF", "雲端翻譯耗時=" +
                 (SystemClock.elapsedRealtime() - translateStart) +
-                "ms；請求=" + completed + "；成功=" + cloudResults.size)
+                "ms；請求=" + httpRequests +
+                "；批次請求=" + batchRequests +
+                "；單筆請求=" + legacyRequests +
+                "；成功段數=" + cloudResults.size +
+                "；候選段數=" + cloudEligible.size +
+                "；模式=" + batchMode)
         }
         for ((i, block) in selected.withIndex()) {
             ensureCurrentPhoto(requestId)
