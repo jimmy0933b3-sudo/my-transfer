@@ -529,7 +529,7 @@ class MainViewModel @Inject constructor(
             (SystemClock.elapsedRealtime() - ocrStart) + "ms；段數=" + selected.size)
         capturedSnapshotElements = selected
         _snapshotLines.value = selected.map {
-            SnapshotTranslationLine(it.originalText.trim())
+            SnapshotTranslationLine(it.originalText.trim(), sourceLanguage = it.sourceLanguage)
         }
         _snapshotStatus.value = "辨識到 " + selected.size + " 段，逐段翻譯中…"
         val result = _snapshotLines.value.toMutableList()
