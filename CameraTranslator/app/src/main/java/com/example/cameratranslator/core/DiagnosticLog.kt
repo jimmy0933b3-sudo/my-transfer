@@ -49,6 +49,7 @@ object DiagnosticLog {
                     file.writeText("[較早的 Log 已自動清除]\n" +
                         tail.substringAfter('\n', tail), Charsets.UTF_8)
                 }
+                Unit
             } catch (error: Exception) {
                 Log.w("CameraTranslator", "Unable to write diagnostic event", error)
             }
