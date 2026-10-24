@@ -3,5 +3,9 @@ main = "src/index.js"
 compatibility_date = "2026-10-01"
 workers_dev = true
 
+# Required by `wrangler preview` for non-production Workers Builds.
+# Preview bindings/secrets must be configured separately in Cloudflare.
+previews = {}
+
 # Azure credentials and APP_ACCESS_TOKEN MUST be Worker runtime Secrets.
 # Do not place keys or tokens under [vars] or commit them.

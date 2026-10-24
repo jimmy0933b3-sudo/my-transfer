@@ -1,0 +1,13 @@
+# Fallback for Cloudflare Workers Builds projects that use the repository root.
+# Preferred Builds Root directory is "worker" (see worker/README.md).
+# Keep the settings in sync with worker/wrangler.toml, except for main path.
+name = "camera-translator-api"
+main = "worker/src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+# Cloudflare Worker Previews require this section.
+# Preview secrets must be separately configured in the Cloudflare dashboard.
+previews = {}
+
+# Do not commit Azure keys or APP_ACCESS_TOKEN. Use Worker runtime secrets.
