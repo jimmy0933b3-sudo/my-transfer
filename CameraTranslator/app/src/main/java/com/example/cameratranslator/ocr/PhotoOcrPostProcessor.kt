@@ -79,6 +79,13 @@ internal object PhotoOcrPostProcessor {
         val incoming = b.text.trimStart()
         if (previous.isEmpty() || incoming.isEmpty()) return false
         if (previous.last() in ".!?。！？:" || incoming.first() in "•-") return false
+        // The Katakana-only collection-sheet TITLE is not a continuation
+        // of a smaller Japanese instruction underneath it. Joining them
+        // destroyed context and produced gibberish in the user's photo.
+        if (a.language == "ja" &&
+            Regex("^[\\u30a0-\\u30ffー・\\s]{4,24}$").matches(previous)) {
+            return false
+        }
         if (Regex("^\\d{1,3}\\s*[.)、:]").containsMatchIn(incoming)) return false
 
         val gap = b.top - a.bottom
@@ -93,7 +100,7 @@ internal object PhotoOcrPostProcessor {
         // Blocks with wildly different text scale are usually different
         // labels (e.g. product name above a tiny legal disclaimer).
         val sizeRatio = max(a.lineHeight, b.lineHeight) / lineHeight
-        if (sizeRatio > 2.25f) return false
+        if (sizeRatio > 1.55f) return false
 
         // Require at least one unfinished sentence on English; title-case
         // visual labels still qualify, but punctuation-delimited lines don't.
