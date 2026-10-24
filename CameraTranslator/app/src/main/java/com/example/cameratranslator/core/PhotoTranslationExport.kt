@@ -18,7 +18,10 @@ internal object PhotoTranslationExport {
     private fun filename(): String =
         "translated_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".jpg"
 
-    fun saveToGallery(context: Context, bitmap: Bitmap): Uri? {
+    fun saveToGallery(
+        context: Context, bitmap: Bitmap,
+        ocrEngine: String = "", translationEngine: String = ""
+    ): Uri? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             // Scoped MediaStore insertion without permission requires Android 10+.
             // Do not pretend success or write to inaccessible public directories.
@@ -34,9 +37,11 @@ internal object PhotoTranslationExport {
         val resolver = context.contentResolver
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, data)
             ?: return null
+        val stamped = if (ocrEngine.isNotBlank() && translationEngine.isNotBlank())
+            PhotoEngineFooter.append(bitmap, ocrEngine, translationEngine) else bitmap
         return try {
             resolver.openOutputStream(uri)?.use { output ->
-                check(bitmap.compress(Bitmap.CompressFormat.JPEG, 94, output)) {
+                check(stamped.compress(Bitmap.CompressFormat.JPEG, 94, output)) {
                     "Failed JPEG encoding"
                 }
             } ?: error("Cannot open gallery output stream")
@@ -47,10 +52,15 @@ internal object PhotoTranslationExport {
         } catch (_: Exception) {
             resolver.delete(uri, null, null)
             null
+        } finally {
+            if (stamped !== bitmap) stamped.recycle()
         }
     }
 
-    fun share(context: Context, bitmap: Bitmap) {
+    fun share(
+        context: Context, bitmap: Bitmap,
+        ocrEngine: String = "", translationEngine: String = ""
+    ) {
         val dir = File(context.cacheDir, "translated_photos").apply { mkdirs() }
         // Only delete our own previous disposable SHARE cache files.
         // Never delete photos intentionally saved by the user to the gallery.
@@ -58,8 +68,14 @@ internal object PhotoTranslationExport {
             it.isFile && it.name.startsWith("translated_") && it.extension == "jpg"
         }?.forEach { it.delete() }
         val file = File(dir, filename())
-        file.outputStream().use {
-            check(bitmap.compress(Bitmap.CompressFormat.JPEG, 94, it))
+        val stamped = if (ocrEngine.isNotBlank() && translationEngine.isNotBlank())
+            PhotoEngineFooter.append(bitmap, ocrEngine, translationEngine) else bitmap
+        try {
+            file.outputStream().use {
+                check(stamped.compress(Bitmap.CompressFormat.JPEG, 94, it))
+            }
+        } finally {
+            if (stamped !== bitmap) stamped.recycle()
         }
         val uri = FileProvider.getUriForFile(
             context, context.packageName + ".fileprovider", file
