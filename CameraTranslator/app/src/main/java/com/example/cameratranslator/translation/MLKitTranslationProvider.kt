@@ -90,9 +90,9 @@ class MLKitTranslationProvider : TranslationProvider {
                         setModelStatus(language, ModelState.FAILED, "下載超時，請按重試")
                         DiagnosticLog.record("MODEL", "離線翻譯 " + language + " 下載逾時")
                     }
-                    !running -> setModelStatus(
-                        language, ModelState.NOT_DOWNLOADED, "尚未下載"
-                    )
+                    !running &&
+                        statusFlow.value[language]?.state != ModelState.FAILED ->
+                        setModelStatus(language, ModelState.NOT_DOWNLOADED, "尚未下載")
                 }
             }
         } catch (e: TimeoutCancellationException) {
