@@ -61,7 +61,7 @@ def normalize_result(result, lang: str, width: int, height: int):
                 language = "en"
             blocks.append({"text": value[:1500], "box": [x1, y1, x2, y2],
                            "score": score, "language": language})
-    return blocks[:45]
+    return blocks[:120]
 
 
 @lru_cache(maxsize=5)
