@@ -53,12 +53,8 @@ Response: `{"text":"你好，世界","characters":11}` (actual translation may v
 
 `node --test` validates authentication, configuration, input checks, and an Azure response with an intercepted network request. CI also builds the Android APK with the unchanged fixed-signature signing mechanism.
 
-## PP-OCRv5 image recognition (optional)
+## OCR policy
 
-The App includes photo text-replacement rendering. Its **primary cloud OCR** is PP-OCRv5 via `POST /ocr`; translation still uses the existing Azure F0 Text Translator via `POST /translate`. Running a PP-OCRv5 predictor requires a separate self-hosted CPU/GPU container. See [paddle-ocr-service/README.md](../paddle-ocr-service/README.md).
-
-Add Worker variables:
-- `PADDLE_OCR_UPSTREAM_URL` = `https://your-ocr-server.example.com/ocr`
-- `PADDLE_OCR_UPSTREAM_TOKEN` = separate Secret shared with container `PADDLE_OCR_SERVICE_TOKEN`, length >=32
-
-After deployment, `GET /health` returns `paddleOcrConfigured:true`; this only verifies settings exist, **not** that inference successfully ran. Android explicitly shows `PaddleOCR PP-OCRv5 雲端` only after a successful PP-OCRv5 response. If unavailable, it shows `ML Kit 本機 OCR` or `Tesseract 泰文離線` instead. In App-only offline mode no photo is uploaded. PP-OCRv5 compute hosting may incur separate costs.
+Photo OCR is exclusively local in the Android app (Paddle v5/v6, ML Kit or Thai Tesseract).
+The Worker only accepts OCR **text** for Azure translation through POST /translate.
+POST /ocr has been permanently removed and returns 404. Images are never uploaded.
