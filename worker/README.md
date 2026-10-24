@@ -12,6 +12,28 @@ In **camera-translator-api** → Settings → Builds:
 - Build command: blank, or `npm install`
 - Deploy command: `npx wrangler deploy`
 - Wrangler name must remain `camera-translator-api`.
+- Production deploy command: `npx wrangler deploy`.
+- Non-production preview command: `npx wrangler preview` (requires `previews = {}`).
+- If Cloudflare is mistakenly pointed at the **repository root**, the root
+  `wrangler.toml` provides a matching fallback and refers to
+  `worker/src/index.js`. Still prefer Root directory `worker` so the
+  `worker/package.json` Wrangler dependency is installed and used.
+
+### Why preview used to fail
+
+Worker Previews are configured separately from the production Worker.
+Both `worker/wrangler.toml` and repository-root `wrangler.toml` now
+declare `previews = {}`. This fixes the error "missing a previews block"
+for either root-directory selection. It does **not** mean a Preview shares
+production secrets: in Cloudflare, set preview variables and secrets under
+Worker → Settings → Previews Base if preview translation needs to work.
+At minimum, preview `APP_ACCESS_TOKEN`, `AZURE_TRANSLATOR_KEY` and
+`AZURE_TRANSLATOR_REGION` must be configured for authorized translation.
+Do not copy secret values into TOML, git history or PR logs.
+
+In Workers Builds, double-check **Settings → Builds → Root directory = worker**;
+Cloudflare account settings cannot be changed by editing this repository.
+This command creates a disposable isolated Preview, **not a production deploy**.
 
 Cloudflare deploys this Worker on a push to the linked branch. Do not embed the Azure key in the repository.
 
