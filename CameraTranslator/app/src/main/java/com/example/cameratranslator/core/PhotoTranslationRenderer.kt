@@ -26,6 +26,9 @@ internal object PhotoTranslationRenderer {
         val canvas = Canvas(output)
         var placed = 0
         var skipped = 0
+        val occupied = mutableListOf<Rect>()
+        // Always compose directly into the actual captured Bitmap. No Compose
+        // overlay is added to the exported or shared photo.
         for ((element, translated) in lines) {
             val box = element.boundingBox
             if (box == null || translated.isBlank() ||
@@ -36,9 +39,15 @@ internal object PhotoTranslationRenderer {
                 skipped++
                 continue
             }
+            // OCR engines can produce overlapping line and block boxes.
+            // Replacing both would erase the first translation with the
+            // second block's background reconstruction.
+            if (occupied.any { painted -> overlapFraction(rect, painted) > 0.23f }) {
+                skipped++
+                continue
+            }
             val pixelColor = nearbyBackgroundColor(original, rect)
-            val inkColor = if (luma(pixelColor) > 135f) Color.rgb(25, 25, 28)
-                else Color.WHITE
+            val inkColor = estimateInkColor(original, rect, pixelColor)
             val pad = (min(rect.width(), rect.height()) * 0.055f).coerceIn(2f, 12f)
             val availableWidth = rect.width() - 2 * pad
             val availableHeight = rect.height() - 2 * pad
@@ -71,12 +80,14 @@ internal object PhotoTranslationRenderer {
                 skipped++
                 continue
             }
-            // Interpolate pixels from all four borders instead of painting
-            // a visibly solid background rectangle over product artwork.
+            // Erase the original glyphs from the image pixels *before*
+            // drawing the new glyphs at those exact bitmap coordinates.
             eraseTextRegion(output, original, rect)
             val overallHeight = chosenLines.size * lineSpacing
             val startY = rect.top + (rect.height() - overallHeight) / 2f +
                 fontSize * 0.89f
+            canvas.save()
+            canvas.clipRect(rect)
             chosenLines.forEachIndexed { i, line ->
                 canvas.drawText(
                     line,
@@ -85,6 +96,8 @@ internal object PhotoTranslationRenderer {
                     paint
                 )
             }
+            canvas.restore()
+            occupied.add(Rect(rect))
             placed++
         }
         return Result(output, placed, skipped)
@@ -96,6 +109,57 @@ internal object PhotoTranslationRenderer {
         val full = width.toLong() * height
         // Reject fake full-frame bounding boxes, notably from old Thai OCR.
         return area < full * 0.45f
+    }
+
+
+    /** Overlap measured against the smaller OCR box, not the whole photo. */
+    private fun overlapFraction(a: Rect, b: Rect): Float {
+        val left = max(a.left, b.left)
+        val top = max(a.top, b.top)
+        val right = min(a.right, b.right)
+        val bottom = min(a.bottom, b.bottom)
+        if (left >= right || top >= bottom) return 0f
+        val smaller = min(
+            a.width().toLong() * a.height(),
+            b.width().toLong() * b.height()
+        ).coerceAtLeast(1)
+        return ((right - left).toLong() * (bottom - top)) / smaller.toFloat()
+    }
+
+    /**
+     * Approximate the actual ink color from interior pixels that differ most
+     * from the nearby background. Fall back to legible black/white if the
+     * region is too uniform to sample reliably.
+     */
+    private fun estimateInkColor(bitmap: Bitmap, rect: Rect, background: Int): Int {
+        val samples = mutableListOf<Pair<Float, Int>>()
+        val stepX = max(1, rect.width() / 20)
+        val stepY = max(1, rect.height() / 10)
+        for (y in rect.top + 1 until rect.bottom - 1 step stepY) {
+            for (x in rect.left + 1 until rect.right - 1 step stepX) {
+                val pixel = bitmap.getPixel(x, y)
+                val distance = kotlin.math.abs(Color.red(pixel) - Color.red(background)) +
+                    kotlin.math.abs(Color.green(pixel) - Color.green(background)) +
+                    kotlin.math.abs(Color.blue(pixel) - Color.blue(background))
+                samples.add(distance.toFloat() to pixel)
+            }
+        }
+        val highContrast = samples.sortedByDescending { it.first }
+            .take(max(1, samples.size / 8))
+            .filter { it.first >= 95f }
+        if (highContrast.isEmpty()) {
+            return if (luma(background) > 135f) Color.rgb(25, 25, 28)
+            else Color.WHITE
+        }
+        val r = highContrast.map { Color.red(it.second) }.average().toInt()
+        val g = highContrast.map { Color.green(it.second) }.average().toInt()
+        val b = highContrast.map { Color.blue(it.second) }.average().toInt()
+        val result = Color.rgb(r, g, b)
+        if (kotlin.math.abs(luma(result) - luma(background)) < 48f) {
+            return if (luma(background) > 135f) Color.rgb(25, 25, 28)
+            else Color.WHITE
+        }
+        return result
     }
 
     private fun nearbyBackgroundColor(bitmap: Bitmap, rect: Rect): Int {

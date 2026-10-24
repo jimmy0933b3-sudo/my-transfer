@@ -52,6 +52,11 @@ internal object PhotoTranslationExport {
 
     fun share(context: Context, bitmap: Bitmap) {
         val dir = File(context.cacheDir, "translated_photos").apply { mkdirs() }
+        // Only delete our own previous disposable SHARE cache files.
+        // Never delete photos intentionally saved by the user to the gallery.
+        dir.listFiles()?.filter {
+            it.isFile && it.name.startsWith("translated_") && it.extension == "jpg"
+        }?.forEach { it.delete() }
         val file = File(dir, filename())
         file.outputStream().use {
             check(bitmap.compress(Bitmap.CompressFormat.JPEG, 94, it))
