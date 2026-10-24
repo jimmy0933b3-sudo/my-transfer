@@ -147,7 +147,7 @@ test("batch validates item count, content, size, and authentication before Azure
     // JSON escapes control characters, so body size can exceed the limit
     // even when every individual Unicode string is within its length limit.
     assert.equal((await worker.fetch(req("/translate-batch", env.APP_ACCESS_TOKEN, {
-      texts: Array(6).fill("\\u0000".repeat(1500)), from: "en", to: "zh"
+      texts: Array(6).fill("\u0000".repeat(1500)), from: "en", to: "zh"
     }), env)).status, 413);
     assert.equal(calls, 0);
   } finally { globalThis.fetch = original; }
