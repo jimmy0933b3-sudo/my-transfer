@@ -301,7 +301,7 @@ fun MainScreen(
                         contentDescription = if (showCapturedOriginal)
                             "原始照片，支援雙指縮放" else "譯文已繪製到原始位置的照片",
                         modifier = Modifier.fillMaxSize()
-                            .padding(top = 54.dp, bottom = 130.dp)
+                            .padding(top = 54.dp, bottom = 146.dp)
                     )
                 } else {
                     CircularProgressIndicator(
@@ -339,13 +339,35 @@ fun MainScreen(
                         .padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
-                    Text(
-                        snapshotStatus.orEmpty(), color = Muted,
-                        fontSize = 10.sp, maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
+                    // Keep OCR diagnostics in the sheet, not in the photo viewport.
+                    // The summary is always tappable, even if recognition fails.
+                    val recognitionSummary = when {
+                        snapshotLines.isNotEmpty() -> "已辨識 ${snapshotLines.size} 段文字"
+                        snapshotStatus?.contains("沒有辨識到") == true -> "未辨識到清楚文字"
+                        snapshotStatus?.contains("失敗") == true ||
+                            snapshotStatus?.contains("無法") == true -> "照片處理失敗"
+                        else -> "正在辨識文字…"
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .heightIn(min = 36.dp)
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(Color.White.copy(alpha = 0.09f))
+                            .clickable { showPhotoDetails = true }
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            recognitionSummary,
+                            modifier = Modifier.weight(1f),
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1
+                        )
+                        Text("查看明細 ›", color = Mint, fontSize = 12.sp)
+                    }
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -445,6 +467,8 @@ fun MainScreen(
                 Text("OCR：" + viewModel.actualPhotoOcrEngine,
                     color = Mint, fontSize = 12.sp)
                 Text("翻譯：" + photoEngineSummary,
+                    color = Muted, fontSize = 12.sp)
+                Text("處理狀態：" + snapshotStatus.orEmpty(),
                     color = Muted, fontSize = 12.sp)
                 HorizontalDivider(color = Color.White.copy(alpha = 0.14f))
                 snapshotLines.forEachIndexed { index, line ->
