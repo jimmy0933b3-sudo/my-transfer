@@ -15,4 +15,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "CameraTranslator"
-include(":app")
+include(":app", ":ppocr-sdk")
