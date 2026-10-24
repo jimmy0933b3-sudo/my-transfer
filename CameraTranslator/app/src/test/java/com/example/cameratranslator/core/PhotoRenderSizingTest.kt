@@ -12,9 +12,9 @@ class PhotoRenderSizingTest {
         assertTrue(PhotoRenderSizing.decrement(180f) > 1f)
     }
 
-    @Test fun shortTitlesFavorLargeTextInsteadOfSixTinyRows() {
-        assertEquals(2, PhotoRenderSizing.lineLimit("Playbook"))
-        assertEquals(2, PhotoRenderSizing.lineLimit("BENI BEAR"))
-        assertEquals(6, PhotoRenderSizing.lineLimit("Long paragraph about trees\nand 30 types of animals"))
+    @Test fun textCanWrapMoreRowsWithoutLosingReadability() {
+        assertEquals(4, PhotoRenderSizing.lineLimit("Playbook"))
+        assertEquals(4, PhotoRenderSizing.lineLimit("BENI BEAR"))
+        assertEquals(7, PhotoRenderSizing.lineLimit("Long paragraph about trees\nand 30 types of animals"))
     }
 }
