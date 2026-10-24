@@ -546,8 +546,9 @@ class MainViewModel @Inject constructor(
             qualityReasonCounts[code] = (qualityReasonCounts[code] ?: 0) + 1
         }
         val translateStart = SystemClock.elapsedRealtime()
-        // Azure translates independent OCR blocks in bounded batches of six.
-        // This avoids the old 18-block cap without multiplying Worker requests.
+        // Azure translates up to 48 eligible OCR blocks in six-item batches.
+        // This improves coverage beyond the old 18-block cap without allowing
+        // unusually dense photos to create unbounded cloud usage.
         // Fall back to 18 individual requests while an older Worker is deployed.
         // A batch is always homogeneous in its source language; never join
         // different OCR blocks into one raw string (loses text alignment).
@@ -560,7 +561,7 @@ class MainViewModel @Inject constructor(
                 PhotoTranslationQuality.rejectOcr(original, block.sourceLanguage) == null &&
                 !PhotoBrandPolicy.shouldPreserve(original, block.sourceLanguage, requestedSource) &&
                 photoGlossary.lookup(original, block.sourceLanguage, requestedTarget) == null
-        } else emptyList()
+        }.take(48) else emptyList()
         if (cloudEligible.isNotEmpty()) {
             val credential = cloudCredentials.load().orEmpty()
             val groups = PhotoCloudBatchPlanner.plan(cloudEligible) {
