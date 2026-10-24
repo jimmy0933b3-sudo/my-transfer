@@ -23,7 +23,7 @@ internal object PhotoBrandPolicy {
         if (letters.length !in 4..48 || letters.any {
                 it !in 'a'..'z' && it !in 'A'..'Z'
             }) return false
-        if (letters.all(Char::isUpperCase)) return true
+        if (letters.all(Char::isUpperCase)) return words.size <= 3 && letters.length <= 25
         // Ordinary mixed-case sentences, e.g. "Create your own World",
         // are NOT protected as trademarks.
         return words.size <= 3 && words.all { word ->
