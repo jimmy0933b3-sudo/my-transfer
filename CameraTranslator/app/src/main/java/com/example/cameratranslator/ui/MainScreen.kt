@@ -149,6 +149,7 @@ private fun RowScope.PhotoAction(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
     viewModel: MainViewModel,
