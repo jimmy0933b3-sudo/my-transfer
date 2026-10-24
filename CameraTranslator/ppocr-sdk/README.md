@@ -1,0 +1,2 @@
+# PaddleOCR Android SDK
+Upstream Apache 2.0 licensed code vendored from PaddlePaddle/PaddleOCR at commit `dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf` under `deploy/ppocr-android/ppocr-sdk`. Copyright 2026 PaddlePaddle Authors. Only changes: app-private absolute model paths in `ORTSessionManager.kt` and `ModelConfig.kt`. Official deployment: https://www.paddleocr.ai/latest/en/version3.x/inference_deployment/cross_platform/android_deployment.html.
