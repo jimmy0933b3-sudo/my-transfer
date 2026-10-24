@@ -9,7 +9,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import com.example.cameratranslator.core.MainViewModel
-import com.example.cameratranslator.ui.MainScreen
+import com.example.cameratranslator.ui.MainAppNavigation
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
@@ -30,13 +30,14 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val cameraPermissionState = rememberPermissionState(android.Manifest.permission.CAMERA)
 
-                    if (cameraPermissionState.status.isGranted) {
-                        com.example.cameratranslator.ui.MainAppNavigation(viewModel)
-                    } else {
-                        androidx.compose.material3.Button(onClick = { cameraPermissionState.launchPermissionRequest() }) {
-                            androidx.compose.material3.Text("請求相機權限")
+                    // Gallery translation does not require camera permission.
+                    MainAppNavigation(
+                        viewModel = viewModel,
+                        cameraPermissionGranted = cameraPermissionState.status.isGranted,
+                        onRequestCameraPermission = {
+                            cameraPermissionState.launchPermissionRequest()
                         }
-                    }
+                    )
                 }
             }
         }
