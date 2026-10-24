@@ -573,6 +573,12 @@ class MainViewModel @Inject constructor(
         val result = _snapshotLines.value.toMutableList()
         var translatedCount = 0
         var rejectedCount = 0
+        // Aggregate categories only; exported logs must not contain photographed text.
+        val rejectionReasons = linkedMapOf<String, Int>()
+        fun recordRejection(stage: String, reason: String) {
+            val category = stage + "：" + reason.substringBefore("：")
+            rejectionReasons[category] = (rejectionReasons[category] ?: 0) + 1
+        }
         val translateStart = SystemClock.elapsedRealtime()
         // Translate up to 18 valid blocks per photo in small parallel waves.
         // The Worker allows 25 requests/minute/IP; use a conservative budget.
@@ -626,6 +632,7 @@ class MainViewModel @Inject constructor(
             )
             if (ocrProblem != null) {
                 rejectedCount++
+                recordRejection("OCR", ocrProblem)
                 result[i] = result[i].copy(
                     translated = null, provider = "保留原字：" + ocrProblem
                 )
@@ -675,7 +682,10 @@ class MainViewModel @Inject constructor(
                 )
             }
             val acceptedText = translated?.takeIf { translationProblem == null }
-            if (translationProblem != null) rejectedCount++
+            if (translationProblem != null) {
+                rejectedCount++
+                recordRejection("翻譯品質", translationProblem)
+            }
             if (!acceptedText.isNullOrBlank()) translatedCount++
             result[i] = result[i].copy(
                 translated = acceptedText,
@@ -688,6 +698,9 @@ class MainViewModel @Inject constructor(
         DiagnosticLog.record("PERF", "翻譯及品質檢查耗時=" +
             (SystemClock.elapsedRealtime() - translateStart) +
             "ms；成功=" + translatedCount + "；保留=" + rejectedCount)
+        DiagnosticLog.record("QUALITY", "保留原文原因=" +
+            rejectionReasons.entries.joinToString { it.key + "=" + it.value }
+                .ifBlank { "無" })
         _snapshotStatus.value = "正在將譯文畫回照片原本的位置…"
         val renderStart = SystemClock.elapsedRealtime()
         val composited = withContext(Dispatchers.Default) {
