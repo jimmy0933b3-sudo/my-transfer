@@ -14,10 +14,10 @@ android {
 
     defaultConfig {
         applicationId = "com.example.cameratranslator"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 34
-        versionCode = 23
-        versionName = "1.6.6"
+        versionCode = 24
+        versionName = "1.6.7"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
@@ -65,6 +65,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":ppocr-sdk"))
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
