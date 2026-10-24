@@ -42,6 +42,18 @@ class PhotoTranslationRecoveryTest {
     }
 
     @Test
+    fun offlineEchoDoesNotCountAsARecoveredTranslation() = runBlocking {
+        val result = PhotoTranslationRecovery.resolve(
+            original = longThai, source = "th", target = "zh",
+            translation = "好", provider = "Azure 雲端",
+            offlineReady = true
+        ) { longThai }
+        assertNull(result.translated)
+        assertTrue(result.offlineAttempted)
+        assertFalse(result.recovered)
+    }
+
+    @Test
     fun missingOfflineModelsDoNotCauseNetworkOrUnverifiedReplacement() = runBlocking {
         val result = PhotoTranslationRecovery.resolve(
             original = longThai, source = "th", target = "zh",
