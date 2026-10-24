@@ -31,7 +31,8 @@ object OpenCVUtils {
         val nativeDir = context.applicationInfo.nativeLibraryDir
         val libraryPresent = File(nativeDir, "libopencv_java4.so").exists()
         val environment = "ABI=" + android.os.Build.SUPPORTED_ABIS.joinToString() +
-            "；libopencv_java4.so 存在=" + libraryPresent
+            "；nativeLibraryDir 可見 .so 檔案=" + libraryPresent +
+            "（僅檢查解壓路徑；Android 可能直接從 APK 載入）"
         try {
             initialized = OpenCVLoader.initDebug()
             lastError = if (initialized) "OpenCV 初始化成功；" + environment
