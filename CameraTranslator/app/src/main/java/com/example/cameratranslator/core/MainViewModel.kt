@@ -610,12 +610,16 @@ class MainViewModel @Inject constructor(
         // Translate adjacent Japanese lines as a unit rather than asking
         // Azure to guess their meaning from isolated fragments. The existing
         // postprocessor prevents merging different columns and label sizes.
+        val deduped = PhotoOcrOverlapDeduper.deduplicate(verifiedRaw)
         val contextual = if (requestedSource == "ja" &&
             !localPaddle.isNullOrEmpty()) {
-            PhotoJapaneseParagraphs.combine(verifiedRaw)
-        } else verifiedRaw
-        DiagnosticLog.record("OCR_CONTEXT", "日文段落合併前=" +
-            verifiedRaw.size + "；合併後=" + contextual.size +
+            PhotoJapaneseParagraphs.combine(deduped)
+        } else deduped
+        DiagnosticLog.record("OCR_CONTEXT", "原始辨識=" +
+            verifiedRaw.size + "；重複文字框清除=" +
+            (verifiedRaw.size - deduped.size) +
+            "；段落合併前=" + deduped.size +
+            "；合併後=" + contextual.size +
             "；雙引擎待確認=" + reviewNeeded)
         val selected = contextual.filter {
             !it.originalText.isBlank() && it.originalText.length > 1
