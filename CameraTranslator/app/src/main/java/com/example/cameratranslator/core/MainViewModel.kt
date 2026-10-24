@@ -377,7 +377,11 @@ class MainViewModel @Inject constructor(
             }
             else -> {
                 actualPhotoOcrEngine = if (requestedSource == "th")
-                    "Tesseract 泰文離線" else "ML Kit 離線（Paddle 備援）"
+                    "Tesseract 泰文 OCR" else when {
+                    version == null -> "ML Kit OCR（使用者選擇）"
+                    !mobileStore.ready(version) -> "ML Kit OCR（Paddle 模型未下載）"
+                    else -> "ML Kit OCR（Paddle 沒有可靠結果）"
+                }
                 _snapshotStatus.value = if (version != null &&
                     !mobileStore.ready(version)) version.label +
                     " 尚未下載，暫用內建 OCR。請到設定下載模型。"
@@ -405,13 +409,25 @@ class MainViewModel @Inject constructor(
         _snapshotStatus.value = "辨識到 " + selected.size + " 段，逐段翻譯中…"
         val result = _snapshotLines.value.toMutableList()
         var translatedCount = 0
+        var rejectedCount = 0
         for ((i, block) in selected.withIndex()) {
             val original = block.originalText.trim()
+            val ocrProblem = PhotoTranslationQuality.rejectOcr(
+                original, block.sourceLanguage
+            )
+            if (ocrProblem != null) {
+                rejectedCount++
+                result[i] = result[i].copy(
+                    translated = null, provider = "保留原字：" + ocrProblem
+                )
+                _snapshotLines.value = result.toList()
+                continue
+            }
             // Product trademarks should not turn into strange
             // Chinese transliterations on JA/ZH/TH packaging.
             // Restrict this to short Latin-only logo-style names.
             val brand = PhotoBrandPolicy.shouldPreserve(
-                original, block.sourceLanguage
+                original, block.sourceLanguage, requestedSource
             )
             val translated: String?
             val provider: String
@@ -447,9 +463,18 @@ class MainViewModel @Inject constructor(
                         else "未翻譯，請檢查 Azure／離線模型"
                 }
             }
-            if (!translated.isNullOrBlank()) translatedCount++
+            val translationProblem = translated?.let {
+                PhotoTranslationQuality.rejectTranslation(
+                    original, it, block.sourceLanguage, requestedTarget
+                )
+            }
+            val acceptedText = translated?.takeIf { translationProblem == null }
+            if (translationProblem != null) rejectedCount++
+            if (!acceptedText.isNullOrBlank()) translatedCount++
             result[i] = result[i].copy(
-                translated = translated, provider = provider
+                translated = acceptedText,
+                provider = if (translationProblem != null)
+                    "保留原字：" + translationProblem else provider
             )
             _snapshotLines.value = result.toList()
         }
@@ -468,7 +493,7 @@ class MainViewModel @Inject constructor(
         _snapshotStatus.value = actualPhotoOcrEngine + "。已辨識 " +
             selected.size + " 段，翻譯 " +
             translatedCount + " 段，照片替字 " + composited.placed +
-            " 段。" + if (composited.skipped > 0)
+            " 段。品質檢查保留原字 " + rejectedCount + " 段。" + if (composited.skipped > 0)
                 " 有 " + composited.skipped + " 段因座標或字數問題未替換，可查看文字明細。" else ""
     }
 

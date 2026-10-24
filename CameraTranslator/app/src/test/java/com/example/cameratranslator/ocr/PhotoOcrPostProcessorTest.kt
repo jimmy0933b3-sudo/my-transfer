@@ -36,6 +36,16 @@ class PhotoOcrPostProcessorTest {
         assertEquals(listOf(0, 1), result.single().originalIndices)
     }
 
+    @Test fun japaneseCollectionSheetTitleDoesNotMergeWithInstructions() {
+        val blocks = listOf(
+            block("コレクションシート", 100, 90, 420, 150, 0, "ja"),
+            block("集めたら□にチェックを入れよう！", 115, 154, 408, 183, 1, "ja")
+        )
+        val combined = PhotoOcrPostProcessor.combine(blocks)
+        assertEquals(2, combined.size)
+        assertEquals("コレクションシート", combined[0].text)
+    }
+
     @Test fun keepsUnrelatedColumnsAndDistantLabelsSeparate() {
         val result = PhotoOcrPostProcessor.combine(
             listOf(

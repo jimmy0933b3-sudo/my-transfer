@@ -17,6 +17,15 @@ internal object PhotoTranslationGlossary {
     fun builtin(original: String, source: String, target: String): String? {
         val key = original.trim().lowercase(Locale.ROOT)
         if (target != "zh" || source !in setOf("en", "ja", "auto")) return null
+        if (source == "ja") {
+            // Stable educational/toy packaging terms whose dictionary
+            // translation in isolation is frequently incorrect.
+            when (key.trim('。', '！', '!')) {
+                "コレクションシート" -> return "收藏清單"
+                "ダイキャストビークルは全部で10種類" -> return "合金小車總共有 10 種"
+                "キミは全部集められるかな？" -> return "你能全部收集到嗎？"
+            }
+        }
         return when (key) {
             "playbook" -> "遊戲手冊"
             else -> null
