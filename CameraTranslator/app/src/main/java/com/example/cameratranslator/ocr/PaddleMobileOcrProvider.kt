@@ -101,7 +101,8 @@ class PaddleMobileOcrProvider(private val context: Context) {
                     boundingBox = Rect(left, top, right, bottom),
                     sourceLanguage = language,
                     imageWidth = bitmap.width,
-                    imageHeight = bitmap.height
+                    imageHeight = bitmap.height,
+                    ocrConfidence = item.confidence
                 )
             }
             lastDiagnostic = version.label + "：模型載入 " + engine!!.coldLoadTimeMs +
