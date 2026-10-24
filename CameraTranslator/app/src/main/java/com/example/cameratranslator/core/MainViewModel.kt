@@ -845,6 +845,12 @@ class MainViewModel @Inject constructor(
                 }
             }
             ensureCurrentPhoto(requestId)
+            // With the explicit photo-text toggle enabled, this exposes the
+            // raw provider result *before* quality filtering, so the copied
+            // report can distinguish OCR mistakes from translation mistakes.
+            DiagnosticLog.photoBlock("RAW_TRANSLATION", i, block.sourceLanguage,
+                translated ?: "", "來源=" + provider.substringBefore("：").take(32))
+            var offlineCandidate: String? = null
             val resolved = PhotoTranslationRecovery.resolve(
                 original = original,
                 source = block.sourceLanguage,
@@ -855,9 +861,14 @@ class MainViewModel @Inject constructor(
             ) {
                 translator.translate(
                     original.take(1500), block.sourceLanguage, requestedTarget
-                )
+                ).also { offlineCandidate = it }
             }
             ensureCurrentPhoto(requestId)
+            if (resolved.offlineAttempted) {
+                DiagnosticLog.photoBlock("OFFLINE_RETRY", i, block.sourceLanguage,
+                    offlineCandidate ?: "", "結果=" +
+                    if (resolved.recovered) "recovered" else "quality_rejected")
+            }
             val outcome = resolved.rejectionReason?.let {
                 PhotoTranslationRejectionReason.code(it, "translation")
             } ?: if (resolved.translated.isNullOrBlank()) "untranslated" else "accepted"
