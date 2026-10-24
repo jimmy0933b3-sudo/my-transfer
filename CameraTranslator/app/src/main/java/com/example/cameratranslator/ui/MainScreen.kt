@@ -472,6 +472,37 @@ fun MainScreen(
                     color = Muted, fontSize = 12.sp)
                 Text("處理狀態：" + snapshotStatus.orEmpty(),
                     color = Muted, fontSize = 12.sp)
+                Text("同一張照片比對 Paddle v5／v6",
+                    color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Text("不重新拍照、不改預設 OCR 設定；各自重新辨識、翻譯及替字。",
+                    color = Muted, fontSize = 11.sp)
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("V5" to "用 v5 辨識", "V6" to "用 v6 辨識")
+                        .forEach { (versionId, label) ->
+                            OutlinedButton(
+                                onClick = {
+                                    showPhotoDetails = false
+                                    viewModel.reprocessPhotoWithPaddle(versionId)
+                                },
+                                modifier = Modifier.weight(1f),
+                                enabled = originalPhoto != null &&
+                                    translatedPhoto != null &&
+                                    viewModel.installedMobileOcr(versionId)
+                            ) { Text(label, color = Mint, fontSize = 12.sp) }
+                        }
+                }
+                if (viewModel.photoComparison.isNotEmpty()) {
+                    viewModel.photoComparison.forEach { (version, result) ->
+                        Text(
+                            (if (version == "mobile_v5") "Paddle v5" else "Paddle v6") +
+                                "：" + result,
+                            color = Mint, fontSize = 12.sp
+                        )
+                    }
+                }
                 HorizontalDivider(color = Color.White.copy(alpha = 0.14f))
                 snapshotLines.forEachIndexed { index, line ->
                     Column(
