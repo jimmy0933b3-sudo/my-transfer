@@ -15,6 +15,13 @@ class PhotoOrientationRankingTest {
         )))
     }
 
+    @Test fun canCorrectUpsideDownPortraitPhoto() {
+        assertEquals(180, PhotoOrientationRanking.choose(mapOf(
+            0 to evidence(6, 0, 3), 90 to evidence(8, 1),
+            180 to evidence(80, 9), 270 to evidence(8, 1)
+        )))
+    }
+
     @Test fun keepsUprightAndUncertainPhotos() {
         assertEquals(0, PhotoOrientationRanking.choose(mapOf(
             0 to evidence(60, 8), 90 to evidence(55, 6), 270 to evidence(4, 0)

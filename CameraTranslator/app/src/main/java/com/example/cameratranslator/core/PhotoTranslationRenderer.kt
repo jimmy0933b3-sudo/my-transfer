@@ -18,7 +18,12 @@ import kotlin.math.min
  * it perfectly reconstructs complex artwork behind the original lettering.
  */
 internal object PhotoTranslationRenderer {
-    data class Result(val bitmap: Bitmap, val placed: Int, val skipped: Int)
+    data class Result(
+        val bitmap: Bitmap,
+        val placed: Int,
+        val skipped: Int,
+        val skipReasons: Map<String, Int> = emptyMap()
+    )
 
     fun compose(original: Bitmap, lines: List<Pair<TextElement, String>>): Result {
         val output = original.copy(Bitmap.Config.ARGB_8888, true)
@@ -26,24 +31,33 @@ internal object PhotoTranslationRenderer {
         val canvas = Canvas(output)
         var placed = 0
         var skipped = 0
+        val skipReasons = linkedMapOf<String, Int>()
+        fun skip(reason: String) {
+            skipped++
+            skipReasons[reason] = (skipReasons[reason] ?: 0) + 1
+        }
         val occupied = mutableListOf<Rect>()
         // Always compose directly into the actual captured Bitmap. No Compose
         // overlay is added to the exported or shared photo.
         for ((element, translated) in lines) {
             val box = element.boundingBox
-            if (box == null || translated.isBlank() ||
+            if (translated.isBlank() ||
                 translated.trim() == element.originalText.trim()) continue
+            if (box == null) {
+                skip("沒有文字座標")
+                continue
+            }
             val rect = Rect(box)
             if (!rect.intersect(0, 0, output.width, output.height) ||
                 !isUsableRect(rect, output.width, output.height)) {
-                skipped++
+                skip("無效文字座標")
                 continue
             }
             // OCR engines can produce overlapping line and block boxes.
             // Replacing both would erase the first translation with the
             // second block's background reconstruction.
             if (occupied.any { painted -> overlapFraction(rect, painted) > 0.23f }) {
-                skipped++
+                skip("文字區塊重疊")
                 continue
             }
             val pixelColor = nearbyBackgroundColor(original, rect)
@@ -62,7 +76,8 @@ internal object PhotoTranslationRenderer {
             // four Chinese characters tiny inside 200px-tall product titles.
             var fontSize = PhotoRenderSizing.initialFontSize(availableHeight)
             val maxLines = PhotoRenderSizing.lineLimit(element.originalText)
-            while (fontSize >= 9f) {
+            val minimumFont = PhotoRenderSizing.minimumFontSize(availableHeight)
+            while (fontSize >= minimumFont) {
                 paint.textSize = fontSize
                 val wrapped = wrap(translated.trim().replace('\n', ' '), paint,
                     availableWidth.coerceAtLeast(5f))
@@ -77,7 +92,7 @@ internal object PhotoTranslationRenderer {
                 fontSize -= PhotoRenderSizing.decrement(fontSize)
             }
             if (chosenLines == null) {
-                skipped++
+                skip("翻譯字數超出文字框")
                 continue
             }
             // Erase the original glyphs from the image pixels *before*
@@ -100,7 +115,7 @@ internal object PhotoTranslationRenderer {
             occupied.add(Rect(rect))
             placed++
         }
-        return Result(output, placed, skipped)
+        return Result(output, placed, skipped, skipReasons)
     }
 
     fun isUsableRect(rect: Rect, width: Int, height: Int): Boolean {

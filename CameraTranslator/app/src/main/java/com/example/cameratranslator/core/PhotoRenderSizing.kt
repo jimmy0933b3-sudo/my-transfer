@@ -10,9 +10,15 @@ internal object PhotoRenderSizing {
     fun initialFontSize(availableHeight: Float): Float =
         min(320f, (availableHeight * 0.88f).coerceAtLeast(9f))
 
+    fun minimumFontSize(availableHeight: Float): Float =
+        if (availableHeight < 18f) 7f else 8f
+
     fun decrement(currentSize: Float): Float =
         (currentSize / 27f).coerceIn(1.0f, 9.0f)
 
     fun lineLimit(original: String): Int =
-        if (original.trim().length <= 24 && '\n' !in original) 2 else 6
+        // A two-line cap rejected short OCR labels when their Chinese
+        // translations were longer than the source. Four lines offer an
+        // additional fit opportunity without widening OCR rectangles.
+        if (original.trim().length <= 24 && '\n' !in original) 4 else 7
 }

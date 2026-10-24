@@ -43,6 +43,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import kotlin.math.abs
@@ -199,6 +202,10 @@ class MainViewModel @Inject constructor(
     private var capturedSnapshotElements: List<TextElement> = emptyList()
     @Volatile private var activePhotoRequest = 0L
     private var photoJob: Job? = null
+    // Same image can be reprocessed with another installed engine, without
+    // reopening the gallery or changing the user's default OCR preference.
+    var photoComparison by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
 
     // Late OCR/network responses must never repaint a newer photograph.
     private fun nextPhotoRequest(): Long {
@@ -300,6 +307,7 @@ class MainViewModel @Inject constructor(
         _snapshotTranslatedPhoto.value = null
         actualPhotoOcrEngine = "尚未拍照"
         photoOcrDiagnostics = "尚未執行 OCR"
+        photoComparison = emptyMap()
         isPaused = false
         resetRecognitions()
     }
@@ -327,6 +335,7 @@ class MainViewModel @Inject constructor(
 
     fun captureSnapshot(context: Context) {
         if (_snapshotStatus.value != null) return
+        photoComparison = emptyMap()
         val camera = cameraController ?: run {
             _statusMessage.value = "相機尚未準備好，請重新開啟"
             return
@@ -397,15 +406,25 @@ class MainViewModel @Inject constructor(
      * pass one real still bitmap through the same full-resolution flow, then
      * rasterize translated text at real OCR coordinates.
      */
-    private suspend fun translatePhoto(inputBitmap: Bitmap, requestId: Long) {
+    private suspend fun translatePhoto(
+        inputBitmap: Bitmap,
+        requestId: Long,
+        forcedMode: String? = null,
+        alreadyUpright: Boolean = false
+    ) {
         ensureCurrentPhoto(requestId)
+        val totalStart = SystemClock.elapsedRealtime()
         val requestedSource = sourceLanguage
         val requestedTarget = targetLanguage
         _snapshotStatus.value = "正在確認照片與文字方向…"
         DiagnosticLog.record("PHOTO", "開始處理；解析度=" +
             inputBitmap.width + "x" + inputBitmap.height +
             "；來源語言=" + requestedSource + "；OCR 模式=" + photoOcrMode)
-        val rotation = photoOcr.suggestUprightRotation(inputBitmap, requestedSource)
+        val orientationStart = SystemClock.elapsedRealtime()
+        val rotation = if (alreadyUpright) 0
+            else photoOcr.suggestUprightRotation(inputBitmap, requestedSource)
+        DiagnosticLog.record("PERF", "方向辨識耗時=" +
+            (SystemClock.elapsedRealtime() - orientationStart) + "ms")
         ensureCurrentPhoto(requestId)
         val bitmap = PhotoBitmapRotation.rotate(inputBitmap, rotation)
         DiagnosticLog.record("PHOTO", "方向校正=" + rotation + "°")
@@ -413,7 +432,8 @@ class MainViewModel @Inject constructor(
         photoOcrDiagnostics = "辨識前校正：照片旋轉 " + rotation + "°"
         // Photo OCR is independent of translation selection. In offline mode
         // ONNX Runtime never contacts the Azure Worker or uploads the photo.
-        val mode = photoOcrMode
+        val mode = forcedMode ?: photoOcrMode
+        val ocrStart = SystemClock.elapsedRealtime()
         val version = when (mode) {
             "mobile_v5" -> PaddleMobileModelStore.Version.V5
             "mobile_v6" -> PaddleMobileModelStore.Version.V6
@@ -505,6 +525,8 @@ class MainViewModel @Inject constructor(
             _snapshotStatus.value = "沒有辨識到清楚文字，請靠近、避開反光再拍攝"
             return
         }
+        DiagnosticLog.record("PERF", "OCR 辨識耗時=" +
+            (SystemClock.elapsedRealtime() - ocrStart) + "ms；段數=" + selected.size)
         capturedSnapshotElements = selected
         _snapshotLines.value = selected.map {
             SnapshotTranslationLine(it.originalText.trim())
@@ -513,9 +535,51 @@ class MainViewModel @Inject constructor(
         val result = _snapshotLines.value.toMutableList()
         var translatedCount = 0
         var rejectedCount = 0
-        // Keep headroom under the Worker's 25 requests/minute/IP limit.
-        var cloudAvailableForPhoto = shouldTryCloud()
-        var cloudCalls = 0
+        val translateStart = SystemClock.elapsedRealtime()
+        // Translate up to 18 valid blocks per photo in small parallel waves.
+        // The Worker allows 25 requests/minute/IP; use a conservative budget.
+        // Later blocks use offline translation, preserving original order.
+        val cloudResults = mutableMapOf<Int, String>()
+        val cloudEligible = if (shouldTryCloud()) selected.indices.filter { index ->
+            val block = selected[index]
+            val original = block.originalText.trim()
+            requestedSource != requestedTarget &&
+                block.sourceLanguage != requestedTarget &&
+                PhotoTranslationQuality.rejectOcr(original, block.sourceLanguage) == null &&
+                !PhotoBrandPolicy.shouldPreserve(original, block.sourceLanguage, requestedSource) &&
+                photoGlossary.lookup(original, block.sourceLanguage, requestedTarget) == null
+        }.take(18) else emptyList()
+        if (cloudEligible.isNotEmpty()) {
+            val credential = cloudCredentials.load().orEmpty()
+            var cloudHealthy = true
+            var completed = 0
+            for (wave in cloudEligible.chunked(3)) {
+                ensureCurrentPhoto(requestId)
+                if (!cloudHealthy) break
+                _snapshotStatus.value = "雲端翻譯中 " + completed + "/" +
+                    cloudEligible.size + " 段…"
+                val responses = coroutineScope {
+                    wave.map { index ->
+                        async(Dispatchers.IO) {
+                            val block = selected[index]
+                            cloudTranslator.translate(
+                                block.originalText.trim().take(1500),
+                                block.sourceLanguage, requestedTarget, credential
+                            )
+                        }
+                    }.awaitAll()
+                }
+                ensureCurrentPhoto(requestId)
+                for ((position, answer) in responses.withIndex()) {
+                    if (!answer.isNullOrBlank()) cloudResults[wave[position]] = answer
+                    else cloudHealthy = false
+                }
+                completed += wave.size
+            }
+            DiagnosticLog.record("PERF", "雲端翻譯耗時=" +
+                (SystemClock.elapsedRealtime() - translateStart) +
+                "ms；請求=" + completed + "；成功=" + cloudResults.size)
+        }
         for ((i, block) in selected.withIndex()) {
             ensureCurrentPhoto(requestId)
             val original = block.originalText.trim()
@@ -547,17 +611,8 @@ class MainViewModel @Inject constructor(
                 val corrected = photoGlossary.lookup(
                     original, block.sourceLanguage, requestedTarget
                 )
-                val tryCloud = corrected == null && cloudAvailableForPhoto &&
-                    cloudCalls < 20
-                val cloud = if (tryCloud) {
-                    cloudCalls++
-                    cloudTranslator.translate(
-                        original.take(1500), block.sourceLanguage, requestedTarget,
-                        cloudCredentials.load().orEmpty()
-                    )
-                } else null
+                val cloud = if (corrected == null) cloudResults[i] else null
                 ensureCurrentPhoto(requestId)
-                if (tryCloud && cloud.isNullOrBlank()) cloudAvailableForPhoto = false
                 if (corrected != null) {
                     translated = corrected
                     provider = "詞彙校正（本機）"
@@ -592,7 +647,11 @@ class MainViewModel @Inject constructor(
             _snapshotLines.value = result.toList()
         }
         ensureCurrentPhoto(requestId)
+        DiagnosticLog.record("PERF", "翻譯及品質檢查耗時=" +
+            (SystemClock.elapsedRealtime() - translateStart) +
+            "ms；成功=" + translatedCount + "；保留=" + rejectedCount)
         _snapshotStatus.value = "正在將譯文畫回照片原本的位置…"
+        val renderStart = SystemClock.elapsedRealtime()
         val composited = withContext(Dispatchers.Default) {
             PhotoTranslationRenderer.compose(
                 bitmap,
@@ -605,6 +664,17 @@ class MainViewModel @Inject constructor(
         }
         ensureCurrentPhoto(requestId)
         _snapshotTranslatedPhoto.value = composited.bitmap
+        DiagnosticLog.record("RENDER", "照片替字耗時=" +
+            (SystemClock.elapsedRealtime() - renderStart) + "ms；跳過原因=" +
+            composited.skipReasons.entries.joinToString { it.key + "=" + it.value })
+        if (mode == "mobile_v5" || mode == "mobile_v6") {
+            photoComparison = photoComparison + (mode to
+                ("有效辨識 " + selected.size + " 段，翻譯 " + translatedCount +
+                    " 段，替字 " + composited.placed + " 段，總耗時 " +
+                    (SystemClock.elapsedRealtime() - totalStart) + "ms"))
+        }
+        DiagnosticLog.record("PERF", "照片處理總耗時=" +
+            (SystemClock.elapsedRealtime() - totalStart) + "ms")
         DiagnosticLog.record("PHOTO", "完成：OCR=" + actualPhotoOcrEngine +
             "；辨識=" + selected.size + "；翻譯=" + translatedCount +
             "；替換=" + composited.placed + "；保留=" + rejectedCount +
@@ -616,9 +686,42 @@ class MainViewModel @Inject constructor(
                 " 有 " + composited.skipped + " 段因座標或字數問題未替換，可查看文字明細。" else ""
     }
 
+    fun reprocessPhotoWithPaddle(versionId: String) {
+        val version = PaddleMobileModelStore.Version.fromId(versionId) ?: return
+        if (!mobileStore.ready(version)) {
+            _snapshotStatus.value = version.label + " 尚未下載，請先到設定下載模型"
+            return
+        }
+        if (_snapshotStatus.value == null) return
+        val photo = _snapshotOriginalPhoto.value ?: return
+        val id = nextPhotoRequest()
+        _snapshotLines.value = emptyList()
+        _snapshotTranslatedPhoto.value = null
+        _snapshotStatus.value = "使用 " + version.label + " 重新辨識同一張照片…"
+        photoJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                translatePhoto(
+                    photo, id,
+                    forcedMode = if (version == PaddleMobileModelStore.Version.V5)
+                        "mobile_v5" else "mobile_v6",
+                    alreadyUpright = true
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                DiagnosticLog.record("PHOTO", "同張照片切換模型失敗", e)
+                if (activePhotoRequest == id) {
+                    _snapshotStatus.value = "重新辨識失敗：" +
+                        (e.message ?: e.javaClass.simpleName)
+                }
+            }
+        }
+    }
+
     /** Translate a selected gallery photo exactly as if the shutter was used. */
     fun translateSelectedPhoto(bitmap: Bitmap) {
         if (_snapshotStatus.value != null) return
+        photoComparison = emptyMap()
         val requestId = nextPhotoRequest()
         isPaused = true
         _snapshotLines.value = emptyList()
