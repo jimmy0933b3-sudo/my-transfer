@@ -25,6 +25,8 @@ import com.example.cameratranslator.history.HistoryDao
 import com.example.cameratranslator.history.TranslationHistory
 import com.example.cameratranslator.ocr.MLKitOcrProvider
 import com.example.cameratranslator.ocr.PaddleOcrCloudProvider
+import com.example.cameratranslator.ocr.PaddleMobileModelStore
+import com.example.cameratranslator.ocr.PaddleMobileOcrProvider
 import com.example.cameratranslator.ocr.ThaiPhotoOcrProvider
 import com.example.cameratranslator.translation.MLKitTranslationProvider
 import com.example.cameratranslator.translation.CloudCredentialStore
@@ -50,6 +52,44 @@ class MainViewModel @Inject constructor(
 ) : AndroidViewModel(application) {
     private val photoOcr = MLKitOcrProvider(application)
     private val paddlePhotoOcr = PaddleOcrCloudProvider()
+    private val mobileOcr = PaddleMobileOcrProvider(application)
+    private val mobileStore = mobileOcr.store
+    var photoOcrMode by mutableStateOf(
+        application.getSharedPreferences("translator_settings", 0)
+            .getString("photo_ocr_mode", "mobile_v6") ?: "mobile_v6"
+    )
+        private set
+    var mobileModelStatuses by mutableStateOf(
+        PaddleMobileModelStore.Version.values().associate {
+            it.name to if (mobileStore.ready(it)) "已下載（可離線辨識）"
+                else "尚未下載"
+        }
+    )
+        private set
+    fun selectPhotoOcrMode(value: String) {
+        if (value !in listOf("mobile_v5", "mobile_v6", "cloud_v5", "mlkit")) return
+        photoOcrMode = value
+        getApplication<Application>().getSharedPreferences("translator_settings", 0)
+            .edit().putString("photo_ocr_mode", value).apply()
+    }
+
+    fun downloadMobileOcr(versionId: String) {
+        val version = PaddleMobileModelStore.Version.fromId(versionId) ?: return
+        if (mobileModelStatuses[version.name]?.contains("下載中") == true) return
+        viewModelScope.launch {
+            mobileModelStatuses = mobileModelStatuses + (version.name to "下載中…")
+            val installed = mobileStore.download(version) { progress ->
+                viewModelScope.launch(Dispatchers.Main.immediate) {
+                    mobileModelStatuses = mobileModelStatuses +
+                        (version.name to ("下載中：" + progress))
+                }
+            }
+            mobileModelStatuses = mobileModelStatuses + (version.name to
+                if (installed) "已下載（可離線辨識）" else "下載失敗（可按鈕重試）")
+        }
+    }
+    fun installedMobileOcr(versionId: String): Boolean =
+        PaddleMobileModelStore.Version.fromId(versionId)?.let(mobileStore::ready) == true
     var preferPaddleOcr by mutableStateOf(
         application.getSharedPreferences("translator_settings", 0)
             .getBoolean("prefer_paddle_ocr", true)
@@ -298,25 +338,52 @@ class MainViewModel @Inject constructor(
         val requestedSource = sourceLanguage
         val requestedTarget = targetLanguage
         _snapshotOriginalPhoto.value = bitmap
-        // Primary cloud OCR: real PP-OCRv5 if the separate inference service
-        // has been deployed. It never runs in offline mode. On missing service,
-        // timeout or invalid output, fall back to device ML Kit/Tesseract OCR.
-        val usePaddle = preferPaddleOcr && cloudTokenConfigured &&
+        // Photo OCR is independent of translation selection. In offline mode
+        // ONNX Runtime never contacts the Azure Worker or uploads the photo.
+        val mode = photoOcrMode
+        val version = when (mode) {
+            "mobile_v5" -> PaddleMobileModelStore.Version.V5
+            "mobile_v6" -> PaddleMobileModelStore.Version.V6
+            else -> null
+        }
+        val mobileReady = version != null && mobileStore.ready(version) &&
+            requestedSource != "th" // official Paddle mobile v5/v6 does not OCR Thai
+        if (mobileReady) {
+            _snapshotStatus.value = "正在使用 " + version!!.label + " 手機離線辨識…"
+        }
+        val localPaddle = if (mobileReady) {
+            try {
+                mobileOcr.recognize(bitmap, requestedSource, version!!)
+            } catch (e: Exception) {
+                Log.w("CameraTranslator", "Local PaddleOCR failed", e)
+                _snapshotStatus.value = version!!.label + " 失敗，轉用 ML Kit…"
+                null
+            }
+        } else null
+        val usePaddleCloud = mode == "cloud_v5" && cloudTokenConfigured &&
             translationMode != "offline" && shouldTryCloud()
-        if (usePaddle) _snapshotStatus.value = "正在以 PaddleOCR PP-OCRv5 辨識照片…"
-        val paddle = if (usePaddle) paddlePhotoOcr.recognize(
-            bitmap, requestedSource, cloudCredentials.load().orEmpty()
-        ) else null
-        val raw = if (!paddle.isNullOrEmpty()) {
-            actualPhotoOcrEngine = "PaddleOCR PP-OCRv5 雲端"
-            paddle
-        } else {
-            actualPhotoOcrEngine = if (requestedSource == "th") "Tesseract 泰文離線"
-                else "ML Kit 本機 OCR"
-            _snapshotStatus.value = if (usePaddle)
-                "PP-OCRv5 未連線或未辨識到文字，改用本機 OCR…"
-            else "使用本機 OCR 辨識照片…"
-            photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
+        val cloudPaddle = if (localPaddle.isNullOrEmpty() && usePaddleCloud)
+            paddlePhotoOcr.recognize(
+                bitmap, requestedSource, cloudCredentials.load().orEmpty()
+            ) else null
+        val raw = when {
+            !localPaddle.isNullOrEmpty() -> {
+                actualPhotoOcrEngine = version!!.label + "（手機離線）"
+                localPaddle
+            }
+            !cloudPaddle.isNullOrEmpty() -> {
+                actualPhotoOcrEngine = "PP-OCRv5 雲端"
+                cloudPaddle
+            }
+            else -> {
+                actualPhotoOcrEngine = if (requestedSource == "th")
+                    "Tesseract 泰文離線" else "ML Kit 離線（Paddle 備援）"
+                _snapshotStatus.value = if (version != null &&
+                    !mobileStore.ready(version)) version.label +
+                    " 尚未下載，暫用內建 OCR。請到設定下載模型。"
+                else "使用本機 OCR 辨識照片…"
+                photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
+            }
         }
         if (thaiOcrModels.isModelInstalled()) {
             thaiOcrModelStatus = "已下載，可離線辨識泰文"
@@ -842,6 +909,8 @@ class MainViewModel @Inject constructor(
 
     override fun onCleared() {
         translator.close()
+        // ONNX sessions are released in a coroutine; never block the UI thread.
+        viewModelScope.launch(Dispatchers.IO) { mobileOcr.release() }
         super.onCleared()
     }
 }
