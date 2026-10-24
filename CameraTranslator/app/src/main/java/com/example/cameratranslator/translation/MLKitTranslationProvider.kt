@@ -3,6 +3,9 @@ package com.example.cameratranslator.translation
 import android.icu.text.Transliterator
 import android.os.Build
 import android.util.Log
+import android.os.SystemClock
+import com.example.cameratranslator.core.DiagnosticLog
+import java.util.concurrent.ConcurrentHashMap
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.common.model.RemoteModelManager
 import com.google.mlkit.nl.translate.TranslateLanguage
@@ -46,6 +49,8 @@ class MLKitTranslationProvider : TranslationProvider {
     )
     val modelStatuses: StateFlow<Map<String, ModelStatus>> = statusFlow.asStateFlow()
     private val downloadLocks = supportedLanguages.associateWith { Mutex() }
+    private val startedAt = ConcurrentHashMap<String, Long>()
+    private val DOWNLOAD_TIMEOUT_MS = 120_000L
     private val translatorLock = Mutex()
     private val translators = mutableMapOf<String, Translator>()
     private val readyPairs = mutableSetOf<String>()
@@ -67,15 +72,39 @@ class MLKitTranslationProvider : TranslationProvider {
 
     suspend fun refreshModelStatuses() {
         try {
-            val downloaded = modelManager.getDownloadedModels(TranslateRemoteModel::class.java)
-                .await().map { it.language }.toSet()
+            val downloaded = withTimeout(12_000L) {
+                modelManager.getDownloadedModels(TranslateRemoteModel::class.java)
+                    .await().map { it.language }.toSet()
+            }
+            val now = SystemClock.elapsedRealtime()
             for (language in supportedLanguages) {
-                if (language in downloaded) {
-                    setModelStatus(language, ModelState.READY, "已下載，可離線翻譯")
-                } else if (statusFlow.value[language]?.state != ModelState.DOWNLOADING) {
-                    setModelStatus(language, ModelState.NOT_DOWNLOADED, "尚未下載")
+                val running = statusFlow.value[language]?.state == ModelState.DOWNLOADING
+                val started = startedAt[language]
+                when {
+                    language in downloaded -> {
+                        startedAt.remove(language)
+                        setModelStatus(language, ModelState.READY, "已下載，可離線翻譯")
+                    }
+                    running && started != null && now - started > DOWNLOAD_TIMEOUT_MS -> {
+                        startedAt.remove(language)
+                        setModelStatus(language, ModelState.FAILED, "下載超時，請按重試")
+                        DiagnosticLog.record("MODEL", "離線翻譯 " + language + " 下載逾時")
+                    }
+                    !running &&
+                        statusFlow.value[language]?.state != ModelState.FAILED ->
+                        setModelStatus(language, ModelState.NOT_DOWNLOADED, "尚未下載")
                 }
             }
+        } catch (e: TimeoutCancellationException) {
+            DiagnosticLog.record("MODEL", "檢查 ML Kit 模型列表逾時", e)
+            for (language in supportedLanguages) {
+                val active = statusFlow.value[language]?.state == ModelState.DOWNLOADING
+                if (!active) {
+                    setModelStatus(language, ModelState.FAILED, "檢查逾時，請按重新檢查")
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w("CameraTranslator", "Failed to query translation models", e)
             for (language in supportedLanguages) {
@@ -94,29 +123,52 @@ class MLKitTranslationProvider : TranslationProvider {
             val conditions = DownloadConditions.Builder().apply {
                 if (wifiOnly) requireWifi()
             }.build()
+            startedAt[language] = SystemClock.elapsedRealtime()
             setModelStatus(
                 language, ModelState.DOWNLOADING,
-                if (wifiOnly) "下載中（僅 Wi-Fi），可以返回相機" else "下載中，可以返回相機"
+                if (wifiOnly) "下載中（僅 Wi-Fi），最多等待 2 分鐘"
+                else "下載中，最多等待 2 分鐘"
             )
+            DiagnosticLog.record("MODEL", "離線翻譯模型 " + language +
+                " 開始下載；僅 Wi-Fi=" + wifiOnly)
             try {
                 // The underlying ML Kit Task is managed by its SDK, rather than a custom
                 // downloader. Retrying calls download() again with the same model.
-                withTimeout(180_000L) {
+                withTimeout(DOWNLOAD_TIMEOUT_MS) {
                     modelManager.download(model(language), conditions).await()
                 }
-                setModelStatus(language, ModelState.READY, "已下載，可離線翻譯")
-                true
+                // A completed SDK Task is not sufficient. Confirm the model
+                // is actually installed before displaying "已下載".
+                val installed = withTimeout(12_000L) {
+                    modelManager.getDownloadedModels(TranslateRemoteModel::class.java)
+                        .await().any { it.language == language }
+                }
+                if (installed) {
+                    setModelStatus(language, ModelState.READY, "已下載，可離線翻譯")
+                    DiagnosticLog.record("MODEL", "離線翻譯模型 " + language + " 已安裝")
+                } else {
+                    setModelStatus(language, ModelState.FAILED,
+                        "下載結束但未找到模型，請按重試")
+                    DiagnosticLog.record("MODEL", "離線翻譯模型 " + language +
+                        " 回傳完成但未找到安裝檔")
+                }
+                installed
             } catch (e: TimeoutCancellationException) {
                 Log.w("CameraTranslator", "Model download timeout for " + language, e)
-                setModelStatus(language, ModelState.FAILED, "下載逾時，點選繼續下載")
+                setModelStatus(language, ModelState.FAILED, "逾時（2 分鐘），請按重試")
+                DiagnosticLog.record("MODEL", "離線翻譯模型 " + language + " 下載逾時")
                 false
             } catch (e: CancellationException) {
                 setModelStatus(language, ModelState.FAILED, "下載中斷，點選繼續下載")
                 throw e
             } catch (e: Exception) {
                 Log.w("CameraTranslator", "Model download failed for " + language, e)
-                setModelStatus(language, ModelState.FAILED, "下載未完成，檢查網路後點選繼續下載")
+                setModelStatus(language, ModelState.FAILED, "下載失敗：" +
+                    (e.message ?: e.javaClass.simpleName).take(90))
+                DiagnosticLog.record("MODEL", "離線翻譯模型 " + language + " 下載失敗", e)
                 false
+            } finally {
+                startedAt.remove(language)
             }
         }
     }

@@ -24,7 +24,6 @@ import com.example.cameratranslator.core.models.TextElement
 import com.example.cameratranslator.history.HistoryDao
 import com.example.cameratranslator.history.TranslationHistory
 import com.example.cameratranslator.ocr.MLKitOcrProvider
-import com.example.cameratranslator.ocr.PaddleOcrCloudProvider
 import com.example.cameratranslator.ocr.PaddleMobileModelStore
 import com.example.cameratranslator.ocr.PaddleMobileOcrProvider
 import com.example.cameratranslator.ocr.ThaiPhotoOcrProvider
@@ -60,12 +59,13 @@ class MainViewModel @Inject constructor(
     private val historyDao: HistoryDao
 ) : AndroidViewModel(application) {
     private val photoOcr = MLKitOcrProvider(application)
-    private val paddlePhotoOcr = PaddleOcrCloudProvider()
     private val mobileOcr = PaddleMobileOcrProvider(application)
     private val mobileStore = mobileOcr.store
     var photoOcrMode by mutableStateOf(
         application.getSharedPreferences("translator_settings", 0)
-            .getString("photo_ocr_mode", "mobile_v6") ?: "mobile_v6"
+            .getString("photo_ocr_mode", "mobile_v6")
+            ?.takeIf { it in setOf("mobile_v5", "mobile_v6", "mlkit") }
+            ?: "mobile_v6"
     )
         private set
     var mobileModelStatuses by mutableStateOf(
@@ -76,7 +76,7 @@ class MainViewModel @Inject constructor(
     )
         private set
     fun selectPhotoOcrMode(value: String) {
-        if (value !in listOf("mobile_v5", "mobile_v6", "cloud_v5", "mlkit")) return
+        if (value !in listOf("mobile_v5", "mobile_v6", "mlkit")) return
         photoOcrMode = value
         DiagnosticLog.record("SETTINGS", "照片 OCR 引擎切換為 " + value)
         getApplication<Application>().getSharedPreferences("translator_settings", 0)
@@ -184,9 +184,22 @@ class MainViewModel @Inject constructor(
 
     fun downloadAllModels() {
         viewModelScope.launch(Dispatchers.IO) {
-            for (language in MLKitTranslationProvider.supportedLanguages) {
-                translator.downloadLanguage(language, wifiOnly)
+            // Each language has a separate download timeout and status.
+            // Run independently so a stalled Chinese model cannot block EN/JA/TH.
+            val semaphore = kotlinx.coroutines.sync.Semaphore(2)
+            kotlinx.coroutines.coroutineScope {
+                listOf("en", "ja", "th", "zh").map { language ->
+                    launch {
+                        semaphore.acquire()
+                        try {
+                            translator.downloadLanguage(language, wifiOnly)
+                        } finally {
+                            semaphore.release()
+                        }
+                    }
+                }
             }
+            translator.refreshModelStatuses()
         }
     }
 
@@ -447,7 +460,6 @@ class MainViewModel @Inject constructor(
                 version.label + " 模型未安裝或不完整，請到設定下載／重新下載"
             version != null && requestedSource == "th" ->
                 "Paddle Mobile 未支援泰文，使用泰文專用辨識"
-            mode == "cloud_v5" -> "設定為 Paddle 雲端 OCR"
             mobileReady -> version!!.label + " 模型已安裝，開始手機端辨識"
             else -> "目前使用 ML Kit"
         }
@@ -479,22 +491,10 @@ class MainViewModel @Inject constructor(
                 "；本張照片沒有通過有效文字條件，已退回 ML Kit"
             DiagnosticLog.record("PADDLE", photoOcrDiagnostics)
         }
-        val usePaddleCloud = mode == "cloud_v5" && cloudTokenConfigured &&
-            translationMode != "offline" && shouldTryCloud()
-        val cloudPaddle = if (localPaddle.isNullOrEmpty() && usePaddleCloud)
-            paddlePhotoOcr.recognize(
-                bitmap, requestedSource, cloudCredentials.load().orEmpty()
-            ) else null
         val raw = when {
             !localPaddle.isNullOrEmpty() -> {
                 actualPhotoOcrEngine = version!!.label + "（手機離線）"
                 localPaddle
-            }
-            !cloudPaddle.isNullOrEmpty() -> {
-                actualPhotoOcrEngine = "PP-OCRv5 雲端"
-                photoOcrDiagnostics = "Paddle 雲端辨識 " +
-                    cloudPaddle.size + " 段文字"
-                cloudPaddle
             }
             else -> {
                 actualPhotoOcrEngine = if (requestedSource == "th")
