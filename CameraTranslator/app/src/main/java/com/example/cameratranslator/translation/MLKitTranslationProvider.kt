@@ -95,6 +95,14 @@ class MLKitTranslationProvider : TranslationProvider {
                     )
                 }
             }
+        } catch (e: TimeoutCancellationException) {
+            DiagnosticLog.record("MODEL", "檢查 ML Kit 模型列表逾時", e)
+            for (language in supportedLanguages) {
+                val active = statusFlow.value[language]?.state == ModelState.DOWNLOADING
+                if (!active) {
+                    setModelStatus(language, ModelState.FAILED, "檢查逾時，請按重新檢查")
+                }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
