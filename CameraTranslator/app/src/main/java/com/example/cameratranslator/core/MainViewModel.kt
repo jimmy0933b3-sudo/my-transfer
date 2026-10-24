@@ -75,6 +75,7 @@ class MainViewModel @Inject constructor(
     fun selectPhotoOcrMode(value: String) {
         if (value !in listOf("mobile_v5", "mobile_v6", "cloud_v5", "mlkit")) return
         photoOcrMode = value
+        DiagnosticLog.record("SETTINGS", "照片 OCR 引擎切換為 " + value)
         getApplication<Application>().getSharedPreferences("translator_settings", 0)
             .edit().putString("photo_ocr_mode", value).apply()
     }
@@ -83,6 +84,8 @@ class MainViewModel @Inject constructor(
         val version = PaddleMobileModelStore.Version.fromId(versionId) ?: return
         if (mobileModelStatuses[version.name]?.contains("下載中") == true) return
         viewModelScope.launch {
+            DiagnosticLog.record("MODEL", "開始" + (if (force) "重新" else "") +
+                "下載 " + version.label)
             mobileModelStatuses = mobileModelStatuses + (version.name to "下載中…")
             if (force) mobileOcr.release()
             val installed = mobileStore.download(version, { progress ->
@@ -93,6 +96,8 @@ class MainViewModel @Inject constructor(
             }, force = force)
             mobileModelStatuses = mobileModelStatuses + (version.name to
                 if (installed) "已下載（可離線辨識）" else "下載失敗（可按鈕重試）")
+            DiagnosticLog.record("MODEL", version.label + " 下載結果：" +
+                if (installed) "已安裝" else "失敗")
         }
     }
     fun installedMobileOcr(versionId: String): Boolean =
@@ -397,9 +402,13 @@ class MainViewModel @Inject constructor(
         val requestedSource = sourceLanguage
         val requestedTarget = targetLanguage
         _snapshotStatus.value = "正在確認照片與文字方向…"
+        DiagnosticLog.record("PHOTO", "開始處理；解析度=" +
+            inputBitmap.width + "x" + inputBitmap.height +
+            "；來源語言=" + requestedSource + "；OCR 模式=" + photoOcrMode)
         val rotation = photoOcr.suggestUprightRotation(inputBitmap, requestedSource)
         ensureCurrentPhoto(requestId)
         val bitmap = PhotoBitmapRotation.rotate(inputBitmap, rotation)
+        DiagnosticLog.record("PHOTO", "方向校正=" + rotation + "°")
         _snapshotOriginalPhoto.value = bitmap
         photoOcrDiagnostics = "辨識前校正：照片旋轉 " + rotation + "°"
         // Photo OCR is independent of translation selection. In offline mode
@@ -422,6 +431,7 @@ class MainViewModel @Inject constructor(
             mobileReady -> version!!.label + " 模型已安裝，開始手機端辨識"
             else -> "目前使用 ML Kit"
         }
+        DiagnosticLog.record("OCR", photoOcrDiagnostics)
         if (mobileReady) {
             _snapshotStatus.value = "正在使用 " + version!!.label + " 手機離線辨識…"
         }
@@ -434,7 +444,9 @@ class MainViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 Log.w("CameraTranslator", "Local PaddleOCR failed", e)
-                photoOcrDiagnostics = version!!.label + " 模型推論異常：" +
+                DiagnosticLog.record("PADDLE", version!!.label +
+                    " 辨識失敗；OpenCV/ONNX 詳細資訊", e)
+                photoOcrDiagnostics = version.label + " 模型推論異常：" +
                     e.javaClass.simpleName + "：" + (e.message ?: "未知錯誤").take(180) +
                     "；已退回 ML Kit，可到設定重新下載模型"
                 _snapshotStatus.value = version.label + " 失敗，轉用 ML Kit…"
@@ -445,6 +457,7 @@ class MainViewModel @Inject constructor(
             !photoOcrDiagnostics.contains("異常")) {
             photoOcrDiagnostics = mobileOcr.lastDiagnostic +
                 "；本張照片沒有通過有效文字條件，已退回 ML Kit"
+            DiagnosticLog.record("PADDLE", photoOcrDiagnostics)
         }
         val usePaddleCloud = mode == "cloud_v5" && cloudTokenConfigured &&
             translationMode != "offline" && shouldTryCloud()
@@ -488,6 +501,7 @@ class MainViewModel @Inject constructor(
                 (it.boundingBox?.left ?: 0) + ":" + (it.boundingBox?.top ?: 0)
         }
         if (selected.isEmpty()) {
+            DiagnosticLog.record("OCR", "所有辨識引擎均未找到可靠文字區塊")
             _snapshotStatus.value = "沒有辨識到清楚文字，請靠近、避開反光再拍攝"
             return
         }
@@ -591,6 +605,10 @@ class MainViewModel @Inject constructor(
         }
         ensureCurrentPhoto(requestId)
         _snapshotTranslatedPhoto.value = composited.bitmap
+        DiagnosticLog.record("PHOTO", "完成：OCR=" + actualPhotoOcrEngine +
+            "；辨識=" + selected.size + "；翻譯=" + translatedCount +
+            "；替換=" + composited.placed + "；保留=" + rejectedCount +
+            "；跳過=" + composited.skipped)
         _snapshotStatus.value = actualPhotoOcrEngine + "。已辨識 " +
             selected.size + " 段，翻譯 " +
             translatedCount + " 段，照片替字 " + composited.placed +
@@ -614,6 +632,7 @@ class MainViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 Log.w("CameraTranslator", "Gallery photo translation failed", e)
+                DiagnosticLog.record("PHOTO", "相簿照片處理失敗", e)
                 if (activePhotoRequest == requestId) {
                     _snapshotStatus.value = "照片翻譯失敗：" +
                         (e.message ?: "請換一張較清晰的照片")

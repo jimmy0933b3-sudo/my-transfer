@@ -16,18 +16,33 @@ package com.paddle.ocr.util
 
 import android.content.Context
 import android.util.Log
+import java.io.File
+import org.opencv.android.OpenCVLoader
 
 object OpenCVUtils {
 
-    private var initialized = false
+    @Volatile private var initialized = false
+    @Volatile var lastError: String = "尚未嘗試載入 OpenCV"
+        private set
 
+    @Synchronized
     fun init(context: Context): Boolean {
         if (initialized) return true
+        val nativeDir = context.applicationInfo.nativeLibraryDir
+        val libraryPresent = File(nativeDir, "libopencv_java4.so").exists()
+        val environment = "ABI=" + android.os.Build.SUPPORTED_ABIS.joinToString() +
+            "；libopencv_java4.so 存在=" + libraryPresent
         try {
-            System.loadLibrary("opencv_java4")
-            initialized = true
-        } catch (e: UnsatisfiedLinkError) {
-            Log.e("OpenCVUtils", "Failed to initialize OpenCV: ${e.message}")
+            initialized = OpenCVLoader.initDebug()
+            lastError = if (initialized) "OpenCV 初始化成功；" + environment
+                else "OpenCVLoader.initDebug() 回傳 false；" + environment
+            if (!initialized) Log.e("OpenCVUtils", lastError)
+        } catch (error: UnsatisfiedLinkError) {
+            lastError = "原生函式庫載入失敗：" + error.message + "；" + environment
+            Log.e("OpenCVUtils", lastError, error)
+        } catch (error: RuntimeException) {
+            lastError = "OpenCV 初始化失敗：" + error.message + "；" + environment
+            Log.e("OpenCVUtils", lastError, error)
         }
         return initialized
     }

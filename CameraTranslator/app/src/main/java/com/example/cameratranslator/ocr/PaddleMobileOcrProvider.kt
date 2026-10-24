@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.util.Log
+import com.example.cameratranslator.core.DiagnosticLog
 import com.example.cameratranslator.core.models.TextElement
 import com.paddle.ocr.EngineConfig
 import com.paddle.ocr.PaddleOCR
@@ -35,7 +36,11 @@ class PaddleMobileOcrProvider(private val context: Context) {
                 engine?.release()
                 engine = null
                 loaded = null
-                if (!OpenCVUtils.init(context)) error("OpenCV 未能在手機啟動")
+                if (!OpenCVUtils.init(context)) {
+                    DiagnosticLog.record("OpenCV", OpenCVUtils.lastError)
+                    error("OpenCV 未能在手機啟動：" + OpenCVUtils.lastError.take(180))
+                }
+                DiagnosticLog.record("OpenCV", OpenCVUtils.lastError)
                 val paths = store.files(version)
                 engine = PaddleOCR.create(
                     context,
@@ -94,6 +99,7 @@ class PaddleMobileOcrProvider(private val context: Context) {
             lastDiagnostic = version.label + "：模型載入 " + engine!!.coldLoadTimeMs +
                 "ms，ONNX 推論 " + result.totalTimeMs + "ms，原始辨識 " +
                 result.results.size + " 段，有效 " + valid.size + " 段"
+            DiagnosticLog.record("PADDLE", lastDiagnostic)
             valid
         }
     }

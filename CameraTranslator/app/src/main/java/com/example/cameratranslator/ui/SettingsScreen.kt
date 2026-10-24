@@ -1,5 +1,16 @@
 package com.example.cameratranslator.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import com.example.cameratranslator.core.DiagnosticLog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -84,6 +95,11 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     var revealToken by remember { mutableStateOf(false) }
     var feedback by remember { mutableStateOf("") }
     var showClearConfirm by remember { mutableStateOf(false) }
+    var showDiagnosticLog by remember { mutableStateOf(false) }
+    var showClearLogConfirm by remember { mutableStateOf(false) }
+    var diagnosticText by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val models by viewModel.modelStatuses.collectAsState()
     val hasKey = viewModel.cloudTokenConfigured
     val state = viewModel.cloudConnectionState
@@ -108,6 +124,28 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             },
             dismissButton = {
                 TextButton(onClick = { showClearConfirm = false }) { Text("取消") }
+            }
+        )
+    }
+
+    if (showClearLogConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearLogConfirm = false },
+            title = { Text("清除診斷日誌？") },
+            text = { Text("舊的故障記錄將無法恢復，之後的新紀錄仍會正常保存。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        diagnosticText = withContext(Dispatchers.IO) {
+                            DiagnosticLog.clear()
+                            DiagnosticLog.read()
+                        }
+                        showClearLogConfirm = false
+                    }
+                }) { Text("清除", color = ErrorColor) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearLogConfirm = false }) { Text("取消") }
             }
         )
     }
@@ -446,6 +484,87 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                     "• 雲端翻譯只傳送 OCR 辨識文字。\n" +
                     "• Azure F0 用量與額度請在 Azure 控制台確認。",
                     color = Muted, fontSize = 13.sp, lineHeight = 23.sp)
+            }
+
+            Panel {
+                Heading("07  /  DIAGNOSTICS", "診斷日誌（Log）",
+                    "記錄 OpenCV、Paddle、OCR、照片處理與模型下載事件。" +
+                    "只存於手機 App 私有空間，不會自動上傳。")
+                Text("遇到故障後按「查看 Log」，再按「複製全部」貼到對話中。" +
+                    "已排除照片內容及 OCR 原文，常見存取密鑰也會遮蔽。",
+                    color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            showDiagnosticLog = !showDiagnosticLog
+                            if (showDiagnosticLog) {
+                                scope.launch {
+                                    diagnosticText = withContext(Dispatchers.IO) {
+                                        DiagnosticLog.read()
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Teal)
+                    ) { Text(if (showDiagnosticLog) "收起 Log" else "查看 Log") }
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                diagnosticText = withContext(Dispatchers.IO) {
+                                    DiagnosticLog.read()
+                                }
+                                val clipboard = context.getSystemService(
+                                    Context.CLIPBOARD_SERVICE
+                                ) as ClipboardManager
+                                clipboard.setPrimaryClip(
+                                    ClipData.newPlainText("CameraTranslator 診斷日誌", diagnosticText)
+                                )
+                                Toast.makeText(context, "已複製全部診斷日誌", Toast.LENGTH_SHORT)
+                                    .show()
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("複製全部") }
+                }
+                if (showDiagnosticLog) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = {
+                            scope.launch {
+                                diagnosticText = withContext(Dispatchers.IO) {
+                                    DiagnosticLog.read()
+                                }
+                            }
+                        }) { Text("重新整理") }
+                        TextButton(onClick = { showClearLogConfirm = true }) {
+                            Text("清除 Log", color = ErrorColor)
+                        }
+                    }
+                    Text("只顯示最後 30,000 字；「複製全部」會複製完整日誌。",
+                        color = Muted, fontSize = 11.sp)
+                    SelectionContainer {
+                        Box(
+                            Modifier.fillMaxWidth().heightIn(max = 320.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFFF1F5F6))
+                                .verticalScroll(rememberScrollState())
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                diagnosticText.takeLast(30_000).ifBlank { "尚無紀錄" },
+                                color = Ink, fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp, lineHeight = 17.sp
+                            )
+                        }
+                    }
+                }
             }
 
             Button(
