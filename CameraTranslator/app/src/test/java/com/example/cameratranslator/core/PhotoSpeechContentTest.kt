@@ -45,7 +45,7 @@ class PhotoSpeechContentTest {
         )
         assertTrue(parts.size > 1)
         assertTrue(parts.all { it.text.length <= 1000 })
-        assertEquals(longText, parts.joinToString(" "))
+        assertEquals(longText, parts.joinToString(" ") { it.text })
     }
 
     @Test
