@@ -140,7 +140,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
 
             Panel {
                 Heading("01  /  SECURITY", "App 密鑰與連線",
-                    "Azure 翻譯只傳文字；若啟用 PP-OCRv5 雲端辨識，照片將經 Cloudflare 傳到你的 OCR 伺服器。")
+                    "Azure 只接收 OCR 文字；PP-OCRv5/v6 Mobile 在手機辨識照片，不上傳圖片。")
                 val title = when {
                     !hasKey -> "尚未加入 App 密鑰"
                     isVerified -> "已儲存，且 Azure 連線成功"
@@ -282,34 +282,74 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             }
 
             Panel {
-                Heading("03  /  PADDLEOCR", "拍照 OCR 優先引擎",
-                    "PP-OCRv5 負責辨識文字位置，Azure 負責翻譯。照片替字與相簿儲存已支援。")
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("優先使用 PP-OCRv5 雲端辨識",
-                            color = Ink, fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold)
-                        Text("英文／中文／日文／泰文；失敗自動改用手機 OCR。",
-                            color = Muted, fontSize = 12.sp)
+                Heading("03  /  MOBILE OCR", "拍照辨識引擎",
+                    "真正的手機端 ONNX 推論。拍照後的座標會直接用於原圖替字；模型只需下載一次。")
+                listOf(
+                    Triple("mobile_v6", "PP-OCRv6 Small（建議）",
+                        "支援中／英／日 OCR，使用 ONNX Runtime 在手機離線辨識"),
+                    Triple("mobile_v5", "PP-OCRv5 Mobile",
+                        "舊版輕量辨識模型，可和 v6 比較辨識結果"),
+                    Triple("mlkit", "ML Kit 本機 OCR",
+                        "無須額外下載 PP 模型；泰文維持 Tesseract"),
+                    Triple("cloud_v5", "PP-OCRv5 雲端服務",
+                        "需自行部署 OCR 上游服務，可能產生費用")
+                ).forEach { (key, title, detail) ->
+                    val selected = viewModel.photoOcrMode == key
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(13.dp))
+                            .background(if (selected) PaleTeal else Color(0xFFF7FAFA))
+                            .clickable { viewModel.selectPhotoOcrMode(key) }
+                            .padding(vertical = 6.dp, horizontal = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selected,
+                            onClick = { viewModel.selectPhotoOcrMode(key) },
+                            colors = RadioButtonDefaults.colors(selectedColor = Teal)
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(title, fontSize = 14.sp, color = Ink,
+                                fontWeight = FontWeight.SemiBold)
+                            Text(detail, fontSize = 11.sp, color = Muted, lineHeight = 16.sp)
+                        }
                     }
-                    Switch(
-                        checked = viewModel.preferPaddleOcr,
-                        onCheckedChange = viewModel::setPaddleOcrPreference,
-                        colors = SwitchDefaults.colors(checkedTrackColor = Teal)
-                    )
                 }
-                Text("注意：啟用後，雲端模式拍照時會上傳壓縮後的整張照片至你自行部署的 PP-OCRv5 服務。" +
-                    "若選「僅離線」，絕對不傳送照片。PP-OCRv5 需要額外的運算主機，可能收費。" +
-                    "未在 Cloudflare 設定上游時，會標示 ML Kit／Tesseract 本機備援。",
-                    color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
-                StatusPill("最近拍照 OCR：" + viewModel.actualPhotoOcrEngine,
-                    success = viewModel.actualPhotoOcrEngine.startsWith("PaddleOCR"))
-                Text("後端部署完成後，在 Worker 設定 PADDLE_OCR_UPSTREAM_URL、" +
-                    "PADDLE_OCR_UPSTREAM_TOKEN；不必把 Paddle 金鑰寫進 APK。",
-                    color = Muted, fontSize = 11.sp)
+                listOf(
+                    "V5" to "PP-OCRv5 Mobile",
+                    "V6" to "PP-OCRv6 Small"
+                ).forEach { (id, title) ->
+                    HorizontalDivider(color = BorderColor)
+                    val installed = viewModel.installedMobileOcr(id)
+                    val status = viewModel.mobileModelStatuses[id] ?: "尚未下載"
+                    Row(Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(title, color = Ink, fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold)
+                            Text(status, color = if (installed) Teal else Muted,
+                                fontSize = 11.sp, lineHeight = 17.sp)
+                        }
+                        OutlinedButton(
+                            onClick = { viewModel.downloadMobileOcr(id) },
+                            enabled = !installed && !status.startsWith("下載中"),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            shape = RoundedCornerShape(11.dp)
+                        ) {
+                            Text(if (installed) "已安裝" else if (status.startsWith("下載中"))
+                                "下載中" else "下載")
+                        }
+                    }
+                }
+                Text("版本切換後，新拍的照片才會使用所選模型。若尚未下載或推論失敗，" +
+                    "會明確顯示 ML Kit 備援。v6 Small 支援日文，v6 Tiny 不支援日文。" +
+                    "泰文維持專用 Tesseract OCR。首次下載需網路，ONNX 模型從官方 PaddlePaddle 來源取得。",
+                    color = Muted, fontSize = 11.sp, lineHeight = 18.sp)
+                StatusPill(
+                    "上次拍照辨識：" + viewModel.actualPhotoOcrEngine,
+                    success = viewModel.actualPhotoOcrEngine.contains("手機離線")
+                )
             }
 
             Panel {
@@ -330,7 +370,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             }
 
             Panel {
-                Heading("04  /  DOWNLOADS", "離線語言模型",
+                Heading("05  /  DOWNLOADS", "離線語言模型",
                     "可個別下載。已安裝狀態會保留，下載中可稍後重新檢查。")
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -398,7 +438,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             }
 
             Panel {
-                Heading("05  /  PRIVACY", "照片與隱私",
+                Heading("06  /  PRIVACY", "照片與隱私",
                     "按下快門或選取相簿照片後才會開始 OCR 辨識。")
                 Text("• 拍攝的照片保留在手機。\n" +
                     "• 雲端翻譯只傳送 OCR 辨識文字。\n" +
