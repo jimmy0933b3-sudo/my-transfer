@@ -29,6 +29,7 @@ import com.example.cameratranslator.camera.CameraPreviewScreen
 import com.example.cameratranslator.core.MainViewModel
 import com.example.cameratranslator.core.PhotoEngineSummary
 import com.example.cameratranslator.core.PhotoTranslationExport
+import com.example.cameratranslator.core.PhotoSpeechContent
 import com.example.cameratranslator.core.SnapshotOcrClipboard
 import com.example.cameratranslator.core.SnapshotTranslationLine
 import kotlinx.coroutines.Dispatchers
@@ -171,6 +172,19 @@ fun MainScreen(
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
+    val speech = remember(context) { PhotoSpeechPlayer(context) }
+    DisposableEffect(speech) {
+        onDispose { speech.shutdown() }
+    }
+    // Never read stale OCR after a new photo, an edit or a tab change.
+    LaunchedEffect(snapshotLines, originalPhoto, showCapturedOriginal) {
+        speech.stop()
+    }
+    LaunchedEffect(speech.errorMessage) {
+        speech.errorMessage?.let { message ->
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        }
+    }
 
     // A new captured image starts with its original. Show translated image
     // automatically when the composite is ready, while retaining manual toggle.
@@ -184,6 +198,7 @@ fun MainScreen(
         if (translatedPhoto != null) showCapturedOriginal = false
     }
     BackHandler(enabled = snapshotStatus != null) {
+        speech.stop()
         showPhotoDetails = false
         viewModel.closeSnapshot()
     }
@@ -316,6 +331,7 @@ fun MainScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = {
+                        speech.stop()
                         showPhotoDetails = false
                         viewModel.closeSnapshot()
                     }) { Text("‹ 返回", color = Color.White, fontSize = 14.sp) }
@@ -398,6 +414,12 @@ fun MainScreen(
                     val originalOCR = SnapshotOcrClipboard.all(snapshotLines)
                     val translatedText = snapshotLines.mapNotNull { it.translated }
                         .filter { it.isNotBlank() }.joinToString("\n")
+                    val speechPhrases = PhotoSpeechContent.forPhoto(
+                        lines = snapshotLines,
+                        translated = !showCapturedOriginal,
+                        targetLanguage = viewModel.targetLanguage,
+                        sourceFallback = viewModel.sourceLanguage
+                    )
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -411,6 +433,15 @@ fun MainScreen(
                             Toast.makeText(context,
                                 if (showCapturedOriginal) "已複製 OCR 原文" else "已複製譯文",
                                 Toast.LENGTH_SHORT).show()
+                        }
+                        PhotoAction(
+                            if (speech.isSpeaking || speech.isPreparing) "■" else "▶",
+                            if (speech.isSpeaking || speech.isPreparing) "停止"
+                                else if (showCapturedOriginal) "朗讀原文" else "朗讀譯文",
+                            enabled = speechPhrases.isNotEmpty() ||
+                                speech.isSpeaking || speech.isPreparing
+                        ) {
+                            speech.toggle(speechPhrases)
                         }
                         PhotoAction("↓", "儲存", enabled = translatedPhoto != null) {
                             translatedPhoto?.let { image ->
