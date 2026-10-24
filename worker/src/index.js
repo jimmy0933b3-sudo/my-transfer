@@ -3,6 +3,9 @@
 const languages = new Set(["auto", "en", "ja", "zh", "th"]);
 const MAX_CHARACTERS = 1500;
 const MAX_BODY_BYTES = 6000;
+const MAX_BATCH_BODY_BYTES = 24000;
+const MAX_BATCH_ITEMS = 6;
+const MAX_BATCH_CHARS = 6000;
 const UPSTREAM_TIMEOUT_MS = 8000;
 const WINDOW_MS = 60_000;
 const MAX_REQUESTS_PER_WINDOW = 25;
@@ -54,7 +57,8 @@ export default {
           env.APP_ACCESS_TOKEN && env.APP_ACCESS_TOKEN.length >= 32)
       });
     }
-    if (url.pathname !== "/translate") return reply({ error: "Not found" }, 404);
+    const batch = url.pathname === "/translate-batch";
+    if (!batch && url.pathname !== "/translate") return reply({ error: "Not found" }, 404);
     if (request.method !== "POST") return reply({ error: "Method not allowed" }, 405);
     if (!env.AZURE_TRANSLATOR_KEY || !env.AZURE_TRANSLATOR_REGION ||
         !env.APP_ACCESS_TOKEN || env.APP_ACCESS_TOKEN.length < 32) {
@@ -69,22 +73,31 @@ export default {
       return reply({ error: "JSON required" }, 415);
     }
     const declaredLength = Number(request.headers.get("content-length") || 0);
-    if (declaredLength > MAX_BODY_BYTES) return reply({ error: "Request too large" }, 413);
+    const bodyLimit = batch ? MAX_BATCH_BODY_BYTES : MAX_BODY_BYTES;
+    if (declaredLength > bodyLimit) return reply({ error: "Request too large" }, 413);
     const raw = await request.text();
-    if (new TextEncoder().encode(raw).length > MAX_BODY_BYTES) {
+    if (new TextEncoder().encode(raw).length > bodyLimit) {
       return reply({ error: "Request too large" }, 413);
     }
     let body;
     try { body = JSON.parse(raw); } catch { return reply({ error: "Invalid JSON" }, 400); }
     const from = body?.from;
     const to = body?.to;
-    const text = body?.text;
-    if (!languages.has(from) || !languages.has(to) ||
-        to === "auto" || typeof text !== "string" ||
-        text.trim().length < 1 || [...text].length > MAX_CHARACTERS) {
-      return reply({ error: "Invalid language or text (maximum 1500 characters)" }, 400);
+    // Azure Translator accepts multiple Text entries in one request.
+    // A bounded batch reduces Worker calls without concatenating unrelated OCR
+    // blocks, so Azure returns each block in the original order.
+    const texts = batch ? body?.texts : [body?.text];
+    if (!languages.has(from) || !languages.has(to) || to === "auto" ||
+        !Array.isArray(texts) || texts.length < 1 ||
+        texts.length > (batch ? MAX_BATCH_ITEMS : 1) ||
+        texts.some(text => typeof text !== "string" || !text.trim() ||
+          [...text].length > MAX_CHARACTERS) ||
+        (batch && texts.reduce((sum, text) => sum + [...text].length, 0) > MAX_BATCH_CHARS)) {
+      return reply({ error: "Invalid language or text(s)" }, 400);
     }
-    if (from === to) return reply({ text });
+    if (from === to) {
+      return reply(batch ? { translations: texts } : { text: texts[0] });
+    }
     const ip = request.headers.get("cf-connecting-ip") || "unknown";
     if (!checkRateLimit(ip)) return reply({ error: "Too many requests" }, 429);
     // Restrict target to the known Azure endpoint. Never proxy an arbitrary URL.
@@ -102,7 +115,7 @@ export default {
           "Ocp-Apim-Subscription-Key": env.AZURE_TRANSLATOR_KEY,
           "Ocp-Apim-Subscription-Region": env.AZURE_TRANSLATOR_REGION
         },
-        body: JSON.stringify([{ Text: text }]),
+        body: JSON.stringify(texts.map(text => ({ Text: text }))),
         signal: controller.signal
       });
       if (!upstream.ok) {
@@ -112,11 +125,17 @@ export default {
           upstream.status === 429 ? 429 : 502);
       }
       const response = await upstream.json();
-      const translation = response?.[0]?.translations?.[0]?.text;
-      if (typeof translation !== "string" || !translation.trim()) {
+      if (!Array.isArray(response) || response.length !== texts.length) {
+        return reply({ error: "Translation response mismatch" }, 502);
+      }
+      const translations = response.map(item => item?.translations?.[0]?.text);
+      if (translations.some(text => typeof text !== "string" || !text.trim())) {
         return reply({ error: "Empty translation" }, 502);
       }
-      return reply({ text: translation, characters: [...text].length });
+      const characters = texts.reduce((sum, text) => sum + [...text].length, 0);
+      return reply(batch
+        ? { translations, characters }
+        : { text: translations[0], characters });
     } catch {
       return reply({ error: "Translation timed out or is unreachable" }, 504);
     } finally {
