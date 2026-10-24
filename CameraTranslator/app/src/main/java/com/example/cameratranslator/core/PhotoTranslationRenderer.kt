@@ -35,35 +35,42 @@ internal object PhotoTranslationRenderer {
         var skipped = 0
         var unchanged = 0
         val skipReasons = linkedMapOf<String, Int>()
-        fun skip(reason: String) {
+        fun skip(reason: String, index: Int, element: TextElement) {
             skipped++
             skipReasons[reason] = (skipReasons[reason] ?: 0) + 1
+            val bounds = element.boundingBox
+            DiagnosticLog.record("PHOTO_RENDER",
+                "編號=" + index + "；結果=跳過；原因=" + reason +
+                "；框=" + (bounds?.toShortString() ?: "無"))
         }
         val occupied = mutableListOf<Rect>()
         // Always compose directly into the actual captured Bitmap. No Compose
         // overlay is added to the exported or shared photo.
-        for ((element, translated) in lines) {
+        for ((index, item) in lines.withIndex()) {
+            val (element, translated) = item
             val box = element.boundingBox
             if (translated.isBlank()) continue
             if (translated.trim() == element.originalText.trim()) {
                 unchanged++
+                DiagnosticLog.record("PHOTO_RENDER",
+                    "編號=" + index + "；結果=同原文不須替換")
                 continue
             }
             if (box == null) {
-                skip("沒有文字座標")
+                skip("沒有文字座標", index, element)
                 continue
             }
             val rect = Rect(box)
             if (!rect.intersect(0, 0, output.width, output.height) ||
                 !isUsableRect(rect, output.width, output.height)) {
-                skip("無效文字座標")
+                skip("無效文字座標", index, element)
                 continue
             }
             // OCR engines can produce overlapping line and block boxes.
             // Replacing both would erase the first translation with the
             // second block's background reconstruction.
             if (occupied.any { painted -> overlapFraction(rect, painted) > 0.23f }) {
-                skip("文字區塊重疊")
+                skip("文字區塊重疊", index, element)
                 continue
             }
             val pixelColor = nearbyBackgroundColor(original, rect)
@@ -98,7 +105,7 @@ internal object PhotoTranslationRenderer {
                 fontSize -= PhotoRenderSizing.decrement(fontSize)
             }
             if (chosenLines == null) {
-                skip("翻譯字數超出文字框")
+                skip("翻譯字數超出文字框", index, element)
                 continue
             }
             // Erase the original glyphs from the image pixels *before*
@@ -120,6 +127,10 @@ internal object PhotoTranslationRenderer {
             canvas.restore()
             occupied.add(Rect(rect))
             placed++
+            DiagnosticLog.record("PHOTO_RENDER",
+                "編號=" + index + "；結果=成功；框=" + rect.toShortString() +
+                "；行數=" + chosenLines.size + "；字級=" +
+                fontSize.toInt())
         }
         return Result(output, placed, skipped, skipReasons, unchanged)
     }

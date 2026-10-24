@@ -10,17 +10,50 @@ import java.util.Locale
 
 /**
  * App-scoped diagnostic events, not unrestricted system logcat.
- * Never log photo content, OCR sentences, translations or credential values.
+ * Photo text is OFF by default. User opt-in permits short OCR / translation\n * snippets only in the private file (never in Logcat).
  * Stored in private no-backup storage, with automatic size bounds.
  */
 object DiagnosticLog {
     private val lock = Any()
-    private const val MAX_BYTES = 160_000
-    private const val TRIM_CHARS = 95_000
+    private const val MAX_BYTES = 320_000
+    private const val TRIM_CHARS = 215_000
     private var target: File? = null
+    @Volatile private var includePhotoText = false
+
+    fun photoTextEnabled(): Boolean = includePhotoText
+
+    fun setPhotoTextEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences("translator_settings", Context.MODE_PRIVATE)
+            .edit().putBoolean("photo_diagnostic_text", enabled).apply()
+        includePhotoText = enabled
+        record("LOG", if (enabled)
+            "使用者開啟照片 OCR／譯文診斷：此模式會記下照片文字，分享前請檢查內容"
+            else "使用者關閉照片 OCR／譯文文字診斷")
+    }
+
+    /**
+     * Per-block correlation, with actual OCR/translated text only if the
+     * user explicitly opts in. No raw photo bytes or credential content.
+     */
+    fun photoBlock(
+        stage: String, index: Int, language: String, text: String, info: String
+    ) {
+        val count = text.codePointCount(0, text.length)
+        val visible = if (includePhotoText) {
+            "；文字=" + text.replace('\n', ' ').replace('\r', ' ')
+                .replace('\t', ' ').take(240)
+        } else "；文字=隱藏（需設定同意）"
+        record("PHOTO_BLOCK", "階段=" + stage.take(24) + "；編號=" + index +
+            "；語言=" + language + "；字數=" + count +
+            "；" + info.take(400) + visible)
+    }
+
 
     fun initialize(context: Context) {
         synchronized(lock) {
+            includePhotoText = context.getSharedPreferences(
+                "translator_settings", Context.MODE_PRIVATE
+            ).getBoolean("photo_diagnostic_text", false)
             if (target == null) {
                 target = File(context.noBackupFilesDir, "camera-translator-diagnostics.log")
             }

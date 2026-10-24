@@ -514,11 +514,135 @@ class MainViewModel @Inject constructor(
             thaiOcrModelStatus = "已下載，可離線辨識泰文"
         }
         ensureCurrentPhoto(requestId)
-        val selected = raw.filter {
+        // Keep independent OCR evidence on the handset. For Japanese
+        // photos, cross-check Paddle rectangles against ML Kit's Japanese
+        // reader. Neither recognizer sends the bitmap over the network.
+        var independentMatches = 0
+        var alternateReadings = 0
+        var reviewNeeded = 0
+        val verifiedRaw = if (requestedSource == "ja" &&
+            !localPaddle.isNullOrEmpty()) {
+            val checkStart = SystemClock.elapsedRealtime()
+            val alternate = try {
+                photoOcr.recognizeTextFromBitmap(bitmap, "ja")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                DiagnosticLog.record("OCR_CHECK",
+                    "第二套日文 OCR 發生異常，維持 Paddle 辨識", e)
+                emptyList()
+            }
+            val alternateBlocks = alternate.mapNotNull { other ->
+                val rect = other.boundingBox ?: return@mapNotNull null
+                PhotoJapaneseOcrConsensus.Block(
+                    other.originalText, rect.left, rect.top, rect.right, rect.bottom
+                )
+            }
+            val checked = raw.mapIndexed { index, block ->
+                val box = block.boundingBox
+                val decision = if (box == null) null else {
+                    PhotoJapaneseOcrConsensus.evaluate(
+                        PhotoJapaneseOcrConsensus.Block(
+                            block.originalText, box.left, box.top, box.right,
+                            box.bottom, block.ocrConfidence
+                        ),
+                        alternateBlocks
+                    )
+                }
+                val action = decision?.action ?: PhotoJapaneseOcrConsensus.Action.KEEP
+                // Show both competing OCR readings only with explicit user
+                // opt-in, so we can distinguish recognition from translation.
+                DiagnosticLog.photoBlock("OCR_PADDLE", index, block.sourceLanguage,
+                    block.originalText, "信心=" +
+                    (block.ocrConfidence?.toString() ?: "無"))
+                if (decision?.alternate != null) {
+                    DiagnosticLog.photoBlock("OCR_MLKIT", index, block.sourceLanguage,
+                        decision.alternate.text, "相似度=" +
+                        (decision.similarity?.toString() ?: "無"))
+                }
+                if (decision?.similarity != null) independentMatches++
+                val changed = when (action) {
+                    PhotoJapaneseOcrConsensus.Action.REPLACE -> {
+                        alternateReadings++
+                        val replacement = decision?.alternate?.text
+                        if (replacement.isNullOrBlank()) block
+                        else block.copy(originalText = replacement,
+                            ocrConfidence = null)
+                    }
+                    PhotoJapaneseOcrConsensus.Action.REVIEW -> {
+                        reviewNeeded++
+                        block.copy(ocrReviewNeeded = true)
+                    }
+                    else -> {
+                        // A very low-confidence Japanese reading without an
+                        // independent usable match must not overwrite source
+                        // pixels with a plausible-looking mistranslation.
+                        if (block.sourceLanguage == "ja" &&
+                            (block.ocrConfidence ?: 1f) < 0.32f &&
+                            decision?.similarity == null) {
+                            reviewNeeded++
+                            block.copy(ocrReviewNeeded = true)
+                        } else block
+                    }
+                }
+                val position = box?.let {
+                    "(" + it.left + "," + it.top + "," + it.right + "," +
+                        it.bottom + ")"
+                } ?: "無"
+                val confidence = block.ocrConfidence?.let {
+                    String.format(java.util.Locale.US, "%.2f", it)
+                } ?: "無"
+                DiagnosticLog.photoBlock("OCR", index, changed.sourceLanguage,
+                    changed.originalText,
+                    "座標=" + position + "；信心=" + confidence +
+                    "；二次OCR=" + action +
+                    "；相似度=" + (decision?.similarity?.let {
+                        String.format(java.util.Locale.US, "%.2f", it)
+                    } ?: "無") +
+                    "；改用第二套=" + (action == PhotoJapaneseOcrConsensus.Action.REPLACE))
+                changed
+            }
+            DiagnosticLog.record("OCR_CHECK", "雙引擎日文交叉比對耗時=" +
+                (SystemClock.elapsedRealtime() - checkStart) + "ms" +
+                "；Paddle=" + raw.size + "；MLKit=" + alternate.size +
+                "；對應比對=" + independentMatches +
+                "；採用MLKit=" + alternateReadings + "；待人工確認=" + reviewNeeded)
+            checked
+        } else {
+            raw.onEachIndexed { index, item ->
+                val rect = item.boundingBox
+                DiagnosticLog.photoBlock("OCR", index, item.sourceLanguage,
+                    item.originalText, "座標=" + (rect?.toShortString() ?: "無") +
+                    "；信心=" + (item.ocrConfidence?.toString() ?: "無"))
+            }
+        }
+        // Translate adjacent Japanese lines as a unit rather than asking
+        // Azure to guess their meaning from isolated fragments. The existing
+        // postprocessor prevents merging different columns and label sizes.
+        val deduped = PhotoOcrOverlapDeduper.deduplicate(verifiedRaw)
+        val contextual = if (requestedSource == "ja" &&
+            !localPaddle.isNullOrEmpty()) {
+            PhotoJapaneseParagraphs.combine(deduped)
+        } else deduped
+        DiagnosticLog.record("OCR_CONTEXT", "原始辨識=" +
+            verifiedRaw.size + "；重複文字框清除=" +
+            (verifiedRaw.size - deduped.size) +
+            "；段落合併前=" + deduped.size +
+            "；合併後=" + contextual.size +
+            "；雙引擎待確認=" + reviewNeeded)
+        val selected = contextual.filter {
             !it.originalText.isBlank() && it.originalText.length > 1
         }.distinctBy {
             it.originalText.trim() + "@" +
                 (it.boundingBox?.left ?: 0) + ":" + (it.boundingBox?.top ?: 0)
+        }
+        selected.forEachIndexed { index, element ->
+            val bounds = element.boundingBox
+            DiagnosticLog.photoBlock("CONTEXT", index, element.sourceLanguage,
+                element.originalText, "合併框=" +
+                (bounds?.toShortString() ?: "無") +
+                "；待確認=" + element.ocrReviewNeeded +
+                "；OCR信心=" + (element.ocrConfidence?.toString() ?: "無"))
         }
         if (selected.isEmpty()) {
             DiagnosticLog.record("OCR", "所有辨識引擎均未找到可靠文字區塊")
@@ -558,6 +682,7 @@ class MainViewModel @Inject constructor(
             val original = block.originalText.trim()
             requestedSource != requestedTarget &&
                 block.sourceLanguage != requestedTarget &&
+                !block.ocrReviewNeeded &&
                 PhotoTranslationQuality.rejectOcr(original, block.sourceLanguage) == null &&
                 !PhotoBrandPolicy.shouldPreserve(original, block.sourceLanguage, requestedSource) &&
                 photoGlossary.lookup(original, block.sourceLanguage, requestedTarget) == null
@@ -678,12 +803,18 @@ class MainViewModel @Inject constructor(
         for ((i, block) in selected.withIndex()) {
             ensureCurrentPhoto(requestId)
             val original = block.originalText.trim()
-            val ocrProblem = PhotoTranslationQuality.rejectOcr(
+            val ocrProblem = if (block.ocrReviewNeeded) {
+                "兩套日文 OCR 辨識差異大，暫不覆蓋原文"
+            } else PhotoTranslationQuality.rejectOcr(
                 original, block.sourceLanguage
             )
             if (ocrProblem != null) {
                 rejectedCount++
                 trackReject("ocr", ocrProblem)
+                DiagnosticLog.photoBlock("REJECT_OCR", i, block.sourceLanguage,
+                    original, "原因=" +
+                    if (block.ocrReviewNeeded) "ocr_crosscheck_disagreement"
+                    else PhotoTranslationRejectionReason.code(ocrProblem, "ocr"))
                 result[i] = result[i].copy(
                     translated = null, provider = "保留原字：" + ocrProblem
                 )
@@ -727,6 +858,12 @@ class MainViewModel @Inject constructor(
                 }
             }
             ensureCurrentPhoto(requestId)
+            // With the explicit photo-text toggle enabled, this exposes the
+            // raw provider result *before* quality filtering, so the copied
+            // report can distinguish OCR mistakes from translation mistakes.
+            DiagnosticLog.photoBlock("RAW_TRANSLATION", i, block.sourceLanguage,
+                translated ?: "", "來源=" + provider.substringBefore("：").take(32))
+            var offlineCandidate: String? = null
             val resolved = PhotoTranslationRecovery.resolve(
                 original = original,
                 source = block.sourceLanguage,
@@ -737,9 +874,24 @@ class MainViewModel @Inject constructor(
             ) {
                 translator.translate(
                     original.take(1500), block.sourceLanguage, requestedTarget
-                )
+                ).also { offlineCandidate = it }
             }
             ensureCurrentPhoto(requestId)
+            if (resolved.offlineAttempted) {
+                DiagnosticLog.photoBlock("OFFLINE_RETRY", i, block.sourceLanguage,
+                    offlineCandidate ?: "", "結果=" +
+                    if (resolved.recovered) "recovered" else "quality_rejected")
+            }
+            val outcome = resolved.rejectionReason?.let {
+                PhotoTranslationRejectionReason.code(it, "translation")
+            } ?: if (resolved.translated.isNullOrBlank()) "untranslated" else "accepted"
+            DiagnosticLog.photoBlock("TRANSLATE", i, block.sourceLanguage,
+                resolved.translated ?: "", "來源=" +
+                resolved.provider.substringBefore("：").take(32) +
+                "；結果=" + outcome +
+                "；雲端品質不合格=" + resolved.cloudQualityFailed +
+                "；離線重試=" + resolved.offlineAttempted +
+                "；離線救回=" + resolved.recovered)
             if (resolved.cloudQualityFailed) cloudQualityFailedCount++
             if (resolved.offlineAttempted) offlineFallbackAttempted++
             if (resolved.recovered) offlineFallbackRecovered++

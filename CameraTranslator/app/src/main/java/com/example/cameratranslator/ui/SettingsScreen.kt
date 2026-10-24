@@ -491,9 +491,31 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                 Heading("07  /  DIAGNOSTICS", "診斷日誌（Log）",
                     "記錄 OpenCV、Paddle、OCR、照片處理與模型下載事件。" +
                     "只存於手機 App 私有空間，不會自動上傳。")
-                Text("遇到故障後按「查看 Log」，再按「複製全部」貼到對話中。" +
-                    "已排除照片內容及 OCR 原文，常見存取密鑰也會遮蔽。",
+                Text("遇到故障後按「查看 Log」，再按「複製全部」。" +
+                    "預設只紀錄區塊編號、座標、信心分數、比對結果與拒絕原因，" +
+                    "不包含照片原文；下方可以暫時開啟文字診斷。",
                     color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+                var photoTextDebug by remember {
+                    mutableStateOf(DiagnosticLog.photoTextEnabled())
+                }
+                Row(Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("詳細文字除錯（手動開啟）", color = Ink,
+                            fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        Text("開啟後每段 OCR 日文、譯文會寫入手機私人 Log。" +
+                            "可能包含照片上的個資，複製分享前請先檢查；關閉不會刪除舊紀錄。",
+                            color = ErrorColor, fontSize = 11.sp, lineHeight = 17.sp)
+                    }
+                    Switch(
+                        checked = photoTextDebug,
+                        onCheckedChange = { value ->
+                            DiagnosticLog.setPhotoTextEnabled(context, value)
+                            photoTextDebug = value
+                        },
+                        colors = SwitchDefaults.colors(checkedTrackColor = Teal)
+                    )
+                }
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)

@@ -13,5 +13,9 @@ data class TextElement(
     val imageWidth: Int = 0,
     val imageHeight: Int = 0,
     /** CameraX has already converted live-camera bounds to PreviewView pixel coordinates. */
-    val isViewCoordinates: Boolean = false
+    val isViewCoordinates: Boolean = false,
+    /** OCR model recognition confidence if supplied (Paddle); null for ML Kit. */
+    val ocrConfidence: Float? = null,
+    /** Cross-check found a credible alternate reading; don't paint unchecked text. */
+    val ocrReviewNeeded: Boolean = false
 )
