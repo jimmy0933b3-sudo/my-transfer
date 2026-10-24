@@ -189,6 +189,10 @@ jobs:
   publish_latest:
     name: Publish one latest APK
     needs: build
+    # Prevent simultaneous master runs from replacing the same Release.
+    concurrency:
+      group: camera-translator-latest-release
+      cancel-in-progress: false
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     permissions:
@@ -208,16 +212,28 @@ jobs:
         set -euo pipefail
         test -s latest-apk/app-release.apk
         cp latest-apk/app-release.apk latest-apk/CameraTranslator-latest.apk
-        VERSION="$(unzip -p latest-apk/CameraTranslator-latest.apk 'META-INF/MANIFEST.MF' >/dev/null 2>&1 && echo 'Verified APK ZIP' || echo 'Signed APK')"
-        NOTES="Latest fixed-signature Android APK from master commit ${GITHUB_SHA}. Keeps the same signing certificate for upgrade installations. ${VERSION}."
-        if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-          gh release upload latest latest-apk/CameraTranslator-latest.apk --clobber --repo "$GITHUB_REPOSITORY"
-          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/latest" -f sha="$GITHUB_SHA" -F force=true >/dev/null
-          gh release edit latest --repo "$GITHUB_REPOSITORY" --title "CameraTranslator Latest APK" --notes "$NOTES" --latest
-        else
-          gh release create latest latest-apk/CameraTranslator-latest.apk --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "CameraTranslator Latest APK" --notes "$NOTES" --latest
+        APP_VERSION="$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)"/\1/p' CameraTranslator/app/build.gradle.kts | head -n 1)"
+        test -n "$APP_VERSION"
+        # Do not let an older queued run replace an already newer build.
+        CURRENT_MASTER="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/master" --jq '.object.sha')"
+        if [[ "$CURRENT_MASTER" != "$GITHUB_SHA" ]]; then
+          echo "Skipping outdated run ${GITHUB_SHA}; latest master is ${CURRENT_MASTER}"
+          exit 0
         fi
-        echo "Latest APK: https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/CameraTranslator-latest.apk"
+        NOTES="v${APP_VERSION} · Fixed-signature Android APK · master commit ${GITHUB_SHA}. Built on $(date -u '+%Y-%m-%d %H:%M UTC'). Same signing certificate for upgrade installations."
+        # Uploading with --clobber changes only the asset time, NOT GitHub's
+        # displayed Release publication time. Re-create this ONE Release after
+        # the validated APK is ready so the date is accurate on every build.
+        if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          gh release delete latest --yes --repo "$GITHUB_REPOSITORY"
+        fi
+        if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/latest" --silent >/dev/null 2>&1; then
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/latest" -f sha="$GITHUB_SHA" -F force=true >/dev/null
+        fi
+        gh release create latest latest-apk/CameraTranslator-latest.apk \
+          --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+          --title "CameraTranslator v${APP_VERSION} (Latest APK)" --notes "$NOTES" --latest
+        echo "Published fresh latest Release for master ${GITHUB_SHA}"
 
     - name: Delete older CameraTranslator Actions artifacts
       env:
