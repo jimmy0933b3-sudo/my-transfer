@@ -94,3 +94,86 @@ test("cloud OCR endpoint is disabled and never receives photos", async () => {
   } finally { globalThis.fetch = original; }
 });
 
+
+
+test("batch returns aligned translations with one Azure request", async () => {
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (url, options) => {
+    calls++;
+    const u = new URL(url);
+    assert.equal(u.searchParams.get("from"), "ja");
+    assert.equal(u.searchParams.get("to"), "zh-Hant");
+    assert.deepEqual(JSON.parse(options.body), [
+      { Text: "こんにちは" }, { Text: "ありがとう" }, { Text: "さようなら" }
+    ]);
+    return Response.json([
+      { translations: [{ text: "你好" }] },
+      { translations: [{ text: "謝謝" }] },
+      { translations: [{ text: "再見" }] }
+    ]);
+  };
+  try {
+    const res = await worker.fetch(req("/translate-batch", env.APP_ACCESS_TOKEN, {
+      texts: ["こんにちは", "ありがとう", "さようなら"],
+      from: "ja", to: "zh"
+    }), env);
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json()).translations, ["你好", "謝謝", "再見"]);
+    assert.equal(calls, 1);
+  } finally { globalThis.fetch = original; }
+});
+
+test("batch validates item count, content, size, and authentication before Azure", async () => {
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; throw Error("Must reject before Azure"); };
+  try {
+    const badInputs = [
+      { texts: [], from: "ja", to: "zh" },
+      { texts: Array(7).fill("こんにちは"), from: "ja", to: "zh" },
+      { texts: ["a".repeat(1501)], from: "en", to: "zh" },
+      { texts: ["hello", ""], from: "en", to: "zh" },
+      { texts: ["hello", 1], from: "en", to: "zh" },
+      { texts: ["Hello"], from: "en", to: "auto" }
+    ];
+    for (const body of badInputs) {
+      const res = await worker.fetch(req("/translate-batch", env.APP_ACCESS_TOKEN, body), env);
+      assert.equal(res.status, 400);
+    }
+    assert.equal((await worker.fetch(req("/translate-batch", "bad", {
+      texts: ["hello"], from: "en", to: "zh"
+    }), env)).status, 401);
+    // JSON escapes control characters, so body size can exceed the limit
+    // even when every individual Unicode string is within its length limit.
+    assert.equal((await worker.fetch(req("/translate-batch", env.APP_ACCESS_TOKEN, {
+      texts: Array(6).fill("\u0000".repeat(1500)), from: "en", to: "zh"
+    }), env)).status, 413);
+    assert.equal(calls, 0);
+  } finally { globalThis.fetch = original; }
+});
+
+test("batch rejects Azure response size mismatch without returning unaligned text", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => Response.json([
+    { translations: [{ text: "你好" }] }
+  ]);
+  try {
+    const res = await worker.fetch(req("/translate-batch", env.APP_ACCESS_TOKEN, {
+      texts: ["hello", "world"], from: "en", to: "zh"
+    }), env);
+    assert.equal(res.status, 502);
+  } finally { globalThis.fetch = original; }
+});
+
+test("batch same-language short circuits without contacting Azure", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => { throw Error("Must not translate equal languages"); };
+  try {
+    const res = await worker.fetch(req("/translate-batch", env.APP_ACCESS_TOKEN, {
+      texts: ["繁體中文", "Hello"], from: "zh", to: "zh"
+    }), env);
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json()).translations, ["繁體中文", "Hello"]);
+  } finally { globalThis.fetch = original; }
+});

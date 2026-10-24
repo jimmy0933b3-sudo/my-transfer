@@ -61,6 +61,33 @@ If `APP_ACCESS_TOKEN` is absent, the Worker **refuses** translation requests. `G
 
 Response: `{"text":"你好，世界","characters":11}` (actual translation may vary).
 
+## Batch translation (v1.6.21)
+
+In addition to the existing `POST /translate` endpoint, the Worker now supports
+`POST /translate-batch` with a `texts` array, a single `from` language
+and a single `to` language:
+
+```json
+{"texts":["こんにちは","ありがとう"],"from":"ja","to":"zh"}
+```
+
+Response: `{"translations":["你好","謝謝"],"characters":11}` (illustrative).
+The Worker sends the strings as **separate Azure Text entries**, never joined
+by a delimiter, and checks the Azure result array length before returning it.
+Each batch has at most six items, 1,500 Unicode characters per item, and a
+40 KB maximum request body. The existing Bearer authorization, per-isolate
+request rate limit, approved language list and upstream timeout still apply.
+
+Android v1.6.21 first checks whether this endpoint is supported.
+If production still runs an older Worker and responds 404, Android transparently
+falls back to the original 18 single-item calls per photo.
+Otherwise, it groups compatible OCR blocks by source language and translates
+up to 48 eligible items per photo in six-item batches. Any unavailable or rejected translated
+text still follows the existing offline-quality policy; no rejected output is
+painted directly over the photograph. All additional Azure characters still
+count against Azure Translator's usage and quotas: batching reduces HTTP
+requests, **not** the billable translated character count.
+
 ## Safety and cost
 
 - Only plain OCR text is sent; camera images are never uploaded to this Worker.
