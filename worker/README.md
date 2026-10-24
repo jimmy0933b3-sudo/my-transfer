@@ -82,7 +82,7 @@ Android v1.6.21 first checks whether this endpoint is supported.
 If production still runs an older Worker and responds 404, Android transparently
 falls back to the original 18 single-item calls per photo.
 Otherwise, it groups compatible OCR blocks by source language and translates
-all eligible items in six-item batches. Any unavailable or rejected translated
+up to 48 eligible items per photo in six-item batches. Any unavailable or rejected translated
 text still follows the existing offline-quality policy; no rejected output is
 painted directly over the photograph. All additional Azure characters still
 count against Azure Translator's usage and quotas: batching reduces HTTP
