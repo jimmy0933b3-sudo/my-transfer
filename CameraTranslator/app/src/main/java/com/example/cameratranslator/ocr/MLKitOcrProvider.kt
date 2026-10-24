@@ -67,7 +67,7 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
         }
         return mergePhotoParagraphs(
             (thaiLines + mlKit).distinctBy { it.sourceLanguage + ":" + it.originalText }
-        ).take(32)
+        )
     }
 
     /**
@@ -118,7 +118,7 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
                 .filter { selectedSource != "auto" || it.sourceLanguage == "ja" }
                 .forEach { addOrReplace(all, it) }
         }
-        return all.take(24)
+        return all
     }
 
     private suspend fun read(

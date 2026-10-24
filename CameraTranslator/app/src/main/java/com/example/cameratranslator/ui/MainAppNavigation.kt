@@ -5,14 +5,20 @@ import androidx.compose.runtime.*
 import com.example.cameratranslator.core.MainViewModel
 
 @Composable
-fun MainAppNavigation(viewModel: MainViewModel) {
+fun MainAppNavigation(
+    viewModel: MainViewModel,
+    cameraPermissionGranted: Boolean,
+    onRequestCameraPermission: () -> Unit
+) {
     var screen by remember { mutableStateOf("Camera") }
     BackHandler(enabled = screen != "Camera") { screen = "Camera" }
     when (screen) {
         "Camera" -> MainScreen(
             viewModel = viewModel,
             onNavigateToPicker = { screen = "Picker" },
-            onNavigateToSettings = { screen = "Settings" }
+            onNavigateToSettings = { screen = "Settings" },
+            cameraPermissionGranted = cameraPermissionGranted,
+            onRequestCameraPermission = onRequestCameraPermission
         )
         "Picker" -> ImagePickerScreen(viewModel = viewModel, onReturnToCamera = {
             screen = "Camera"

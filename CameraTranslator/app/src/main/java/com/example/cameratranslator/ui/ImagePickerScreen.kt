@@ -11,8 +11,10 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -27,15 +29,23 @@ import kotlin.math.max
 @Composable
 fun ImagePickerScreen(viewModel: MainViewModel, onReturnToCamera: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var decoding by remember { mutableStateOf(false) }
     val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) {
-            try {
-                val bitmap = decodeGalleryImage(context, uri)
-                    ?: error("無法讀取所選照片")
-                viewModel.translateSelectedPhoto(bitmap)
-                onReturnToCamera()
-            } catch (e: Exception) {
-                Toast.makeText(context, "照片讀取失敗，請選擇其他照片", Toast.LENGTH_SHORT).show()
+        if (uri != null && !decoding) {
+            decoding = true
+            scope.launch {
+                try {
+                    val bitmap = withContext(Dispatchers.IO) {
+                        decodeGalleryImage(context, uri)
+                    } ?: error("無法讀取所選照片")
+                    viewModel.translateSelectedPhoto(bitmap)
+                    onReturnToCamera()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "照片讀取失敗，請選擇其他照片", Toast.LENGTH_SHORT).show()
+                } finally {
+                    decoding = false
+                }
             }
         }
     }
@@ -45,9 +55,10 @@ fun ImagePickerScreen(viewModel: MainViewModel, onReturnToCamera: () -> Unit) {
         Text("選擇照片後才辨識與翻譯，譯文會直接畫回照片上的文字位置。可切換原圖、儲存或分享。")
         Button(onClick = {
             pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-        }, modifier = Modifier.fillMaxWidth()) {
-            Text("選擇照片並翻譯")
+        }, enabled = !decoding, modifier = Modifier.fillMaxWidth()) {
+            Text(if (decoding) "正在讀取照片…" else "選擇照片並翻譯")
         }
+        if (decoding) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
     }
 }
 

@@ -84,7 +84,7 @@ class PaddleOcrCloudProvider {
                 val xRatio = bitmap.width.toFloat() / width
                 val yRatio = bitmap.height.toFloat() / height
                 val elements = mutableListOf<TextElement>()
-                for (index in 0 until minOf(blocks.length(), 45)) {
+                for (index in 0 until minOf(blocks.length(), 120)) {
                     val item = blocks.optJSONObject(index) ?: continue
                     val text = item.optString("text").trim()
                     val languageCode = item.optString("language")

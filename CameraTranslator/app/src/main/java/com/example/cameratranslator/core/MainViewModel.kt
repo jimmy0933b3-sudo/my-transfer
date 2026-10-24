@@ -33,6 +33,12 @@ import com.example.cameratranslator.translation.CloudCredentialStore
 import com.example.cameratranslator.translation.CloudTranslationProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -183,6 +189,22 @@ class MainViewModel @Inject constructor(
     private val _snapshotTranslatedPhoto = MutableStateFlow<Bitmap?>(null)
     val snapshotTranslatedPhoto: StateFlow<Bitmap?> = _snapshotTranslatedPhoto.asStateFlow()
     private var capturedSnapshotElements: List<TextElement> = emptyList()
+    @Volatile private var activePhotoRequest = 0L
+    private var photoJob: Job? = null
+
+    // Late OCR/network responses must never repaint a newer photograph.
+    private fun nextPhotoRequest(): Long {
+        photoJob?.cancel()
+        photoJob = null
+        return ++activePhotoRequest
+    }
+
+    private suspend fun ensureCurrentPhoto(requestId: Long) {
+        currentCoroutineContext().ensureActive()
+        if (activePhotoRequest != requestId) {
+            throw CancellationException("Photo request is no longer active")
+        }
+    }
 
     /**
      * When stylized writing or reflection is read incorrectly, a user can
@@ -262,7 +284,7 @@ class MainViewModel @Inject constructor(
 
 
     fun closeSnapshot() {
-        capturedSnapshotElements = emptyList()
+        nextPhotoRequest()
         _snapshotStatus.value = null
         _snapshotLines.value = emptyList()
         capturedSnapshotElements = emptyList()
@@ -279,6 +301,7 @@ class MainViewModel @Inject constructor(
             _statusMessage.value = "相機尚未準備好，請重新開啟"
             return
         }
+        val requestId = nextPhotoRequest()
         isPaused = true
         _snapshotLines.value = emptyList()
         _snapshotOriginalPhoto.value = null
@@ -296,17 +319,25 @@ class MainViewModel @Inject constructor(
             camera.takePicture(options, ContextCompat.getMainExecutor(context),
                 object : ImageCapture.OnImageSavedCallback {
                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                        viewModelScope.launch(Dispatchers.IO) {
+                        if (activePhotoRequest != requestId) {
+                            file.delete()
+                            return
+                        }
+                        photoJob = viewModelScope.launch(Dispatchers.IO) {
                             try {
+                                ensureCurrentPhoto(requestId)
                                 _snapshotStatus.value = if (sourceLanguage == "th")
                                     "正在準備泰文 OCR 模型並辨識照片（首次使用需網路）…"
                                 else "正在辨識完整文字區塊…"
 
                                 val bitmap = SnapshotBitmapDecoder.decode(file)
                                     ?: error("無法讀取照片")
-                                translatePhoto(bitmap)
+                                translatePhoto(bitmap, requestId)
+                            } catch (e: CancellationException) {
+                                throw e
                             } catch (e: Exception) {
                                 Log.w("CameraTranslator", "Still photo translation failed", e)
+                                if (activePhotoRequest != requestId) return@launch
                                 _snapshotStatus.value = if (sourceLanguage == "th")
                                     "泰文 OCR 發生問題：" + (e.message ?: "請重拍或檢查模型")
                                 else "拍照辨識失敗：請重新拍攝並確認對焦"
@@ -318,7 +349,9 @@ class MainViewModel @Inject constructor(
                     override fun onError(exception: ImageCaptureException) {
                         file.delete()
                         Log.w("CameraTranslator", "Camera photo capture error", exception)
-                        _snapshotStatus.value = "拍照失敗：請稍後重新拍攝"
+                        if (activePhotoRequest == requestId) {
+                            _snapshotStatus.value = "拍照失敗：請稍後重新拍攝"
+                        }
                     }
                 }
             )
@@ -334,7 +367,8 @@ class MainViewModel @Inject constructor(
      * pass one real still bitmap through the same full-resolution flow, then
      * rasterize translated text at real OCR coordinates.
      */
-    private suspend fun translatePhoto(bitmap: Bitmap) {
+    private suspend fun translatePhoto(bitmap: Bitmap, requestId: Long) {
+        ensureCurrentPhoto(requestId)
         val requestedSource = sourceLanguage
         val requestedTarget = targetLanguage
         _snapshotOriginalPhoto.value = bitmap
@@ -392,12 +426,13 @@ class MainViewModel @Inject constructor(
         if (thaiOcrModels.isModelInstalled()) {
             thaiOcrModelStatus = "已下載，可離線辨識泰文"
         }
+        ensureCurrentPhoto(requestId)
         val selected = raw.filter {
             !it.originalText.isBlank() && it.originalText.length > 1
         }.distinctBy {
             it.originalText.trim() + "@" +
                 (it.boundingBox?.left ?: 0) + ":" + (it.boundingBox?.top ?: 0)
-        }.take(32)
+        }
         if (selected.isEmpty()) {
             _snapshotStatus.value = "沒有辨識到清楚文字，請靠近、避開反光再拍攝"
             return
@@ -410,7 +445,11 @@ class MainViewModel @Inject constructor(
         val result = _snapshotLines.value.toMutableList()
         var translatedCount = 0
         var rejectedCount = 0
+        // Keep headroom under the Worker's 25 requests/minute/IP limit.
+        var cloudAvailableForPhoto = shouldTryCloud()
+        var cloudCalls = 0
         for ((i, block) in selected.withIndex()) {
+            ensureCurrentPhoto(requestId)
             val original = block.originalText.trim()
             val ocrProblem = PhotoTranslationQuality.rejectOcr(
                 original, block.sourceLanguage
@@ -440,12 +479,17 @@ class MainViewModel @Inject constructor(
                 val corrected = photoGlossary.lookup(
                     original, block.sourceLanguage, requestedTarget
                 )
-                val cloud = if (corrected == null && shouldTryCloud())
+                val tryCloud = corrected == null && cloudAvailableForPhoto &&
+                    cloudCalls < 20
+                val cloud = if (tryCloud) {
+                    cloudCalls++
                     cloudTranslator.translate(
-                        original.take(1500),
-                        block.sourceLanguage, requestedTarget,
+                        original.take(1500), block.sourceLanguage, requestedTarget,
                         cloudCredentials.load().orEmpty()
-                    ) else null
+                    )
+                } else null
+                ensureCurrentPhoto(requestId)
+                if (tryCloud && cloud.isNullOrBlank()) cloudAvailableForPhoto = false
                 if (corrected != null) {
                     translated = corrected
                     provider = "詞彙校正（本機）"
@@ -463,6 +507,7 @@ class MainViewModel @Inject constructor(
                         else "未翻譯，請檢查 Azure／離線模型"
                 }
             }
+            ensureCurrentPhoto(requestId)
             val translationProblem = translated?.let {
                 PhotoTranslationQuality.rejectTranslation(
                     original, it, block.sourceLanguage, requestedTarget
@@ -478,6 +523,7 @@ class MainViewModel @Inject constructor(
             )
             _snapshotLines.value = result.toList()
         }
+        ensureCurrentPhoto(requestId)
         _snapshotStatus.value = "正在將譯文畫回照片原本的位置…"
         val composited = withContext(Dispatchers.Default) {
             PhotoTranslationRenderer.compose(
@@ -489,6 +535,7 @@ class MainViewModel @Inject constructor(
                 }
             )
         }
+        ensureCurrentPhoto(requestId)
         _snapshotTranslatedPhoto.value = composited.bitmap
         _snapshotStatus.value = actualPhotoOcrEngine + "。已辨識 " +
             selected.size + " 段，翻譯 " +
@@ -500,17 +547,23 @@ class MainViewModel @Inject constructor(
     /** Translate a selected gallery photo exactly as if the shutter was used. */
     fun translateSelectedPhoto(bitmap: Bitmap) {
         if (_snapshotStatus.value != null) return
+        val requestId = nextPhotoRequest()
         isPaused = true
         _snapshotLines.value = emptyList()
         _snapshotOriginalPhoto.value = null
         _snapshotTranslatedPhoto.value = null
         _snapshotStatus.value = "正在處理相簿照片…"
-        viewModelScope.launch(Dispatchers.IO) {
+        photoJob = viewModelScope.launch(Dispatchers.IO) {
             try {
-                translatePhoto(bitmap)
+                translatePhoto(bitmap, requestId)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w("CameraTranslator", "Gallery photo translation failed", e)
-                _snapshotStatus.value = "照片翻譯失敗：" + (e.message ?: "請換一張較清晰的照片")
+                if (activePhotoRequest == requestId) {
+                    _snapshotStatus.value = "照片翻譯失敗：" +
+                        (e.message ?: "請換一張較清晰的照片")
+                }
             }
         }
     }
@@ -933,9 +986,17 @@ class MainViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        photoJob?.cancel()
         translator.close()
-        // ONNX sessions are released in a coroutine; never block the UI thread.
-        viewModelScope.launch(Dispatchers.IO) { mobileOcr.release() }
+        // viewModelScope is cancelled when onCleared() runs. Cleanup must
+        // survive that cancellation, or ONNX sessions may remain open.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                mobileOcr.release()
+            } catch (error: Exception) {
+                Log.w("CameraTranslator", "OCR cleanup failed", error)
+            }
+        }
         super.onCleared()
     }
 }

@@ -117,7 +117,7 @@ export default {
             result.width < 1 || result.height < 1) {
           return reply({error:"Invalid upstream OCR response"},502);
         }
-        const blocks = result.blocks.slice(0,45).filter(b =>
+        const blocks = result.blocks.slice(0,120).filter(b =>
           typeof b.text === "string" && b.text.length <= 1500 &&
           ["en","ja","zh","th"].includes(b.language) &&
           Number.isFinite(b.score) &&
