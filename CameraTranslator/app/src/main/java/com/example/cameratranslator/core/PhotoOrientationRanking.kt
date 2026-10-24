@@ -18,10 +18,12 @@ internal object PhotoOrientationRanking {
     fun choose(scores: Map<Int, Evidence>): Int {
         val baseline = scores[0] ?: return 0
         val strongest = scores.entries.maxByOrNull { it.value.score } ?: return 0
-        if (strongest.key == 0 || strongest.key !in setOf(90, 270)) return 0
+        if (strongest.key == 0 || strongest.key !in setOf(90, 180, 270)) return 0
         if (strongest.value.horizontalLines < 2 ||
             strongest.value.readableCharacters < 10) return 0
-        if (strongest.value.score < baseline.score * 1.4f + 8f) return 0
+        // The new orientation must decisively beat the current orientation,
+        // including its OCR text evidence. Guard against tiny packaging logos.
+        if (strongest.value.score < baseline.score * 1.45f + 12f) return 0
         return strongest.key
     }
 }
