@@ -14,7 +14,8 @@ android {
 }
 dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.21.1")
-    implementation("com.quickbirdstudios:opencv:4.5.3")
+    // 4.5.3 has runtime issues on some Android devices according to its maintainer.
+    implementation("com.quickbirdstudios:opencv:4.5.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.core:core-ktx:1.12.0")
 }
