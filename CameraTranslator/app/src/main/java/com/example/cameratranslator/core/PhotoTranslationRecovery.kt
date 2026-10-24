@@ -45,6 +45,8 @@ internal object PhotoTranslationRecovery {
 
         val alternate = translateOffline()
         if (!alternate.isNullOrBlank() &&
+            // A failed/offline untranslated echo is not a successful recovery.
+            (source == target || alternate.trim() != original.trim()) &&
             PhotoTranslationQuality.rejectTranslation(
                 original, alternate, source, target
             ) == null
