@@ -427,7 +427,7 @@ class MainViewModel @Inject constructor(
             // Chinese transliterations on JA/ZH/TH packaging.
             // Restrict this to short Latin-only logo-style names.
             val brand = PhotoBrandPolicy.shouldPreserve(
-                original, block.sourceLanguage
+                original, block.sourceLanguage, requestedSource
             )
             val translated: String?
             val provider: String
