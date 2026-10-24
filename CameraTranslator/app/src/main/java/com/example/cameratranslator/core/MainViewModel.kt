@@ -532,6 +532,12 @@ class MainViewModel @Inject constructor(
                     "第二套日文 OCR 發生異常，維持 Paddle 辨識", e)
                 emptyList()
             }
+            val alternateBlocks = alternate.mapNotNull { other ->
+                val rect = other.boundingBox ?: return@mapNotNull null
+                PhotoJapaneseOcrConsensus.Block(
+                    other.originalText, rect.left, rect.top, rect.right, rect.bottom
+                )
+            }
             val checked = raw.mapIndexed { index, block ->
                 val box = block.boundingBox
                 val decision = if (box == null) null else {
@@ -540,17 +546,20 @@ class MainViewModel @Inject constructor(
                             block.originalText, box.left, box.top, box.right,
                             box.bottom, block.ocrConfidence
                         ),
-                        alternate.mapNotNull { other ->
-                            val rect = other.boundingBox
-                                ?: return@mapNotNull null
-                            PhotoJapaneseOcrConsensus.Block(
-                                other.originalText, rect.left, rect.top,
-                                rect.right, rect.bottom
-                            )
-                        }
+                        alternateBlocks
                     )
                 }
                 val action = decision?.action ?: PhotoJapaneseOcrConsensus.Action.KEEP
+                // Show both competing OCR readings only with explicit user
+                // opt-in, so we can distinguish recognition from translation.
+                DiagnosticLog.photoBlock("OCR_PADDLE", index, block.sourceLanguage,
+                    block.originalText, "信心=" +
+                    (block.ocrConfidence?.toString() ?: "無"))
+                if (decision?.alternate != null) {
+                    DiagnosticLog.photoBlock("OCR_MLKIT", index, block.sourceLanguage,
+                        decision.alternate.text, "相似度=" +
+                        (decision.similarity?.toString() ?: "無"))
+                }
                 if (decision?.similarity != null) independentMatches++
                 val changed = when (action) {
                     PhotoJapaneseOcrConsensus.Action.REPLACE -> {
