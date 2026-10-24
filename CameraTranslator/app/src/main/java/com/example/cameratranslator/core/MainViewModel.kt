@@ -700,7 +700,12 @@ class MainViewModel @Inject constructor(
         _snapshotStatus.value = "使用 " + version.label + " 重新辨識同一張照片…"
         photoJob = viewModelScope.launch(Dispatchers.IO) {
             try {
-                translatePhoto(photo, id, forcedMode = versionId, alreadyUpright = true)
+                translatePhoto(
+                    photo, id,
+                    forcedMode = if (version == PaddleMobileModelStore.Version.V5)
+                        "mobile_v5" else "mobile_v6",
+                    alreadyUpright = true
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
