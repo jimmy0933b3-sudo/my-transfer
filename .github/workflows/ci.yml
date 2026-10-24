@@ -60,6 +60,217 @@ jobs:
     - name: Build Debug APK (development only)
       run: ./gradlew assembleDebug
 
+    - name: Verify OpenCV native binaries in APK
+      run: |
+        set -euo pipefail
+        APK="app/build/outputs/apk/debug/app-debug.apk"
+        test -s "$APK"
+        if ! unzip -Z1 "$APK" | grep -q '^lib/arm64-v8a/libopencv_java4\\.so
+      if: github.event_name == 'pull_request'
+      uses: actions/upload-artifact@v4
+      with:
+        name: CameraTranslator-debug
+        path: CameraTranslator/app/build/outputs/apk/debug/app-debug.apk
+        retention-days: 1
+
+    # Public forks' pull requests never receive production signing credentials.
+    # A disposable test key validates the Gradle signing DSL before merging.
+    - name: Test Release signing with disposable key (PR only)
+      if: github.event_name == 'pull_request'
+      run: |
+        set -euo pipefail
+        umask 077
+        keytool -genkeypair -noprompt -storetype PKCS12 \
+          -keystore app/ci-signing-test.jks -alias ci-test \
+          -keyalg RSA -keysize 2048 -validity 2 \
+          -storepass "throwaway-signing-check" -keypass "throwaway-signing-check" \
+          -dname "CN=CI Disposable Signing Test"
+        ANDROID_SIGNING_KEYSTORE_PATH="$PWD/app/ci-signing-test.jks" \
+        KEYSTORE_PASSWORD="throwaway-signing-check" \
+        KEY_ALIAS="ci-test" \
+        KEY_PASSWORD="throwaway-signing-check" \
+          ./gradlew assembleRelease
+        rm -f app/ci-signing-test.jks
+        echo "Disposable Release signing Gradle configuration verified."
+
+    - name: Set up fixed signing key (master only)
+      if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+      env:
+        KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$KEYSTORE_BASE64" && -z "$KEYSTORE_PASSWORD" && -z "$KEY_ALIAS" && -z "$KEY_PASSWORD" ]]; then
+          echo "Signing secrets not configured. Skipping signed Release APK."
+          echo "SIGNING_READY=false" >> "$GITHUB_ENV"
+        elif [[ -z "$KEYSTORE_BASE64" || -z "$KEYSTORE_PASSWORD" || -z "$KEY_ALIAS" || -z "$KEY_PASSWORD" ]]; then
+          echo "::error::Incomplete signing secrets. Configure all four signing secrets."
+          exit 1
+        else
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > app/ci-release-key.jks
+          keytool -list -keystore app/ci-release-key.jks \
+            -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+          echo "SIGNING_READY=true" >> "$GITHUB_ENV"
+        fi
+
+    - name: Build fixed-key Release APK
+      if: env.SIGNING_READY == 'true' && github.ref == 'refs/heads/master'
+      env:
+        ANDROID_SIGNING_KEYSTORE_PATH: ${{ github.workspace }}/CameraTranslator/app/ci-release-key.jks
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      run: ./gradlew assembleRelease
+
+    - name: Verify fixed signing fingerprint
+      if: env.SIGNING_READY == 'true' && github.ref == 'refs/heads/master'
+      env:
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      run: |
+        set -euo pipefail
+        APK="app/build/outputs/apk/release/app-release.apk"
+        APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+        if [[ ! -x "$APKSIGNER" || ! -f "$APK" ]]; then
+          echo "::error::apksigner or signed APK not found."
+          exit 1
+        fi
+
+        # The signing certificate digest is public, not a private key or password.
+        # Compare both the keystore certificate and the actual signed APK with
+        # the pinned SHA-256 so every future CI run uses the SAME release key.
+        EXPECTED="0c052c70052be200239f105daa5547e5e902e25961f357537d7f970a555ae8f3"
+        KEYSTORE_CERT="$(
+          keytool -exportcert -alias "$KEY_ALIAS" \
+            -keystore app/ci-release-key.jks \
+            -storepass "$KEYSTORE_PASSWORD" \
+            | openssl x509 -inform DER -fingerprint -sha256 -noout \
+            | sed -E 's/^[^=]*=//; s/://g' \
+            | tr '[:upper:]' '[:lower:]'
+        )"
+        if [[ "$KEYSTORE_CERT" != "$EXPECTED" ]]; then
+          echo "::error::GitHub KEYSTORE_BASE64 contains a different signing key. Expected certificate SHA-256 $EXPECTED, found $KEYSTORE_CERT. Re-check the four repository Secrets."
+          exit 1
+        fi
+
+        # apksigner output varies slightly by version; tolerate leading
+        # whitespace and both V2/V3 signer labels.
+        SIGNATURE_REPORT="$("$APKSIGNER" verify --verbose --print-certs "$APK")"
+        ACTUAL="$(
+          printf '%s\n' "$SIGNATURE_REPORT" \
+          | sed -nE 's/^.*certificate SHA-256 digest:[[:space:]]*([[:xdigit:]:]+).*$/\1/p' \
+          | head -n 1 \
+          | tr -d ':' | tr '[:upper:]' '[:lower:]'
+        )"
+        if [[ -z "$ACTUAL" ]]; then
+          echo "::error::Could not parse apksigner certificate digest. Check apksigner --print-certs format."
+          printf '%s\n' "$SIGNATURE_REPORT" | grep -i 'certificate SHA-256 digest' || true
+          exit 1
+        fi
+        if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+          echo "::error::APK signing certificate mismatch. Expected $EXPECTED, got $ACTUAL"
+          exit 1
+        fi
+        echo "Verified fixed Release signing certificate SHA-256: $ACTUAL"
+
+    - name: Upload fixed-signature Release APK
+      if: env.SIGNING_READY == 'true' && github.ref == 'refs/heads/master'
+      uses: actions/upload-artifact@v4
+      with:
+        name: CameraTranslator-release-fixed-signature
+        path: CameraTranslator/app/build/outputs/apk/release/app-release.apk
+        retention-days: 30
+        if-no-files-found: error
+
+    - name: Remove temporary keystores
+      if: always()
+      run: rm -f app/ci-release-key.jks app/ci-signing-test.jks
+
+  # Publish a single stable, public download URL for the LATEST signed APK.
+  # GitHub Actions artifacts expire; an updated Release asset remains until replaced.
+  publish_latest:
+    name: Publish one latest APK
+    needs: build
+    # Prevent simultaneous master runs from replacing the same Release.
+    concurrency:
+      group: camera-translator-latest-release
+      cancel-in-progress: false
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download freshly signed release APK
+      uses: actions/download-artifact@v4
+      with:
+        name: CameraTranslator-release-fixed-signature
+        path: latest-apk
+
+    - name: Publish or replace the stable latest APK
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        test -s latest-apk/app-release.apk
+        cp latest-apk/app-release.apk latest-apk/CameraTranslator-latest.apk
+        APP_VERSION="$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)"/\1/p' CameraTranslator/app/build.gradle.kts | head -n 1)"
+        test -n "$APP_VERSION"
+        # Do not let an older queued run replace an already newer build.
+        CURRENT_MASTER="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/master" --jq '.object.sha')"
+        if [[ "$CURRENT_MASTER" != "$GITHUB_SHA" ]]; then
+          echo "Skipping outdated run ${GITHUB_SHA}; latest master is ${CURRENT_MASTER}"
+          exit 0
+        fi
+        NOTES="v${APP_VERSION} · Fixed-signature Android APK · master commit ${GITHUB_SHA}. Built on $(date -u '+%Y-%m-%d %H:%M UTC'). Same signing certificate for upgrade installations."
+        # Uploading with --clobber changes only the asset time, NOT GitHub's
+        # displayed Release publication time. Re-create this ONE Release after
+        # the validated APK is ready so the date is accurate on every build.
+        if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          gh release delete latest --yes --repo "$GITHUB_REPOSITORY"
+        fi
+        if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/latest" --silent >/dev/null 2>&1; then
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/latest" -f sha="$GITHUB_SHA" -F force=true >/dev/null
+        fi
+        gh release create latest latest-apk/CameraTranslator-latest.apk \
+          --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+          --title "CameraTranslator v${APP_VERSION} (Latest APK)" --notes "$NOTES" --latest
+        echo "Published fresh latest Release for master ${GITHUB_SHA}"
+
+    - name: Delete older CameraTranslator Actions artifacts
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        # Only this app's CI artifacts. Never touch source files, tags,
+        # unrelated workflow artifacts, signing keys, or user data.
+        # The latest master Release artifact stays; the GitHub Release APK
+        # remains separately available via one permanent latest URL.
+        gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+          | jq -rs --arg run "$GITHUB_RUN_ID" '
+            .[].artifacts[]
+            | select(.name | startswith("CameraTranslator-"))
+            | select(
+                .name != "CameraTranslator-release-fixed-signature"
+                or ((.workflow_run.id | tostring) != $run)
+              )
+            | .id
+          ' \
+          | while read -r artifact_id; do
+            echo "Removing old CameraTranslator artifact ID ${artifact_id}"
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}" >/dev/null
+          done
+; then
+          echo "::error::OpenCV arm64 native library missing from APK; Paddle cannot initialize."
+          exit 1
+        fi
+        echo "OpenCV arm64 native library verified in APK."
+
     - name: Upload PR Debug APK (temporary test only)
       if: github.event_name == 'pull_request'
       uses: actions/upload-artifact@v4
