@@ -328,9 +328,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                     Triple("mobile_v5", "PP-OCRv5 Mobile",
                         "舊版輕量辨識模型，可和 v6 比較辨識結果"),
                     Triple("mlkit", "ML Kit 本機 OCR",
-                        "無須額外下載 PP 模型；泰文維持 Tesseract"),
-                    Triple("cloud_v5", "PP-OCRv5 雲端服務",
-                        "需自行部署 OCR 上游服務，可能產生費用")
+                        "無須額外下載 PP 模型；泰文維持 Tesseract")
                 ).forEach { (key, title, detail) ->
                     val selected = viewModel.photoOcrMode == key
                     Row(
@@ -437,7 +435,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                     ) { Text("重新檢查") }
                 }
                 listOf(
-                    "zh" to "繁體中文",
+                    "zh" to "繁體中文（ML Kit 中文模型）",
                     "en" to "英文",
                     "ja" to "日文",
                     "th" to "泰文"
@@ -473,6 +471,9 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                         else StatusPill("已就緒", success = true)
                     }
                 }
+                Text("繁體中文使用 ML Kit 中文翻譯模型，翻譯後再於手機轉為繁體。" +
+                    " 模型下載逾時或失敗會顯示可重試，不會持續卡在下載中。",
+                    color = Muted, fontSize = 11.sp)
                 Text("ML Kit 無法提供可靠百分比，因此只顯示實際下載狀態。",
                     color = Muted, fontSize = 11.sp)
             }
