@@ -325,10 +325,10 @@ fun MainScreen(
                         fontWeight = FontWeight.SemiBold,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
-                    TextButton(onClick = {
-                        showPhotoDetails = false
-                        viewModel.closeSnapshot()
-                    }) { Text("重拍 ↻", color = Mint, fontSize = 14.sp) }
+                    TextButton(
+                        onClick = { viewModel.rotateSnapshotClockwise() },
+                        enabled = originalPhoto != null && translatedPhoto != null
+                    ) { Text("旋轉 ↻", color = Mint, fontSize = 14.sp) }
                 }
 
                 Column(
@@ -467,6 +467,8 @@ fun MainScreen(
                 Text("OCR：" + viewModel.actualPhotoOcrEngine,
                     color = Mint, fontSize = 12.sp)
                 Text("翻譯：" + photoEngineSummary,
+                    color = Muted, fontSize = 12.sp)
+                Text("Paddle： " + viewModel.photoOcrDiagnostics,
                     color = Muted, fontSize = 12.sp)
                 Text("處理狀態：" + snapshotStatus.orEmpty(),
                     color = Muted, fontSize = 12.sp)

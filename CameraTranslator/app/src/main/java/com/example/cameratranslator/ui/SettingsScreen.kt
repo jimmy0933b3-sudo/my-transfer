@@ -332,13 +332,13 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                                 fontSize = 11.sp, lineHeight = 17.sp)
                         }
                         OutlinedButton(
-                            onClick = { viewModel.downloadMobileOcr(id) },
-                            enabled = !installed && !status.startsWith("下載中"),
+                            onClick = { viewModel.downloadMobileOcr(id, force = installed) },
+                            enabled = !status.startsWith("下載中"),
                             contentPadding = PaddingValues(horizontal = 12.dp),
                             shape = RoundedCornerShape(11.dp)
                         ) {
-                            Text(if (installed) "已安裝" else if (status.startsWith("下載中"))
-                                "下載中" else "下載")
+                            Text(if (status.startsWith("下載中")) "下載中" else if (installed)
+                                "重新下載" else "下載")
                         }
                     }
                 }
@@ -350,6 +350,8 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                     "上次拍照辨識：" + viewModel.actualPhotoOcrEngine,
                     success = viewModel.actualPhotoOcrEngine.contains("手機離線")
                 )
+                Text("Paddle 診斷：" + viewModel.photoOcrDiagnostics,
+                    color = Muted, fontSize = 11.sp, lineHeight = 18.sp)
             }
 
             Panel {

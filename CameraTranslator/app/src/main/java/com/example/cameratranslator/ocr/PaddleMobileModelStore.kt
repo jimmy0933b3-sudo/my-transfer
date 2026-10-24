@@ -39,10 +39,18 @@ class PaddleMobileModelStore(context: Context) {
     fun ready(version: Version): Boolean {
         val f = files(version)
         return f.det.length() > 1_000_000 &&
-            f.rec.length() > 1_000_000 && f.vocab.length() > 10_000
+            f.rec.length() > 1_000_000 && f.vocab.length() > 10_000 &&
+            // A large HTML/error payload must not be mistaken for a model.
+            runCatching {
+                f.vocab.bufferedReader().use { reader ->
+                    reader.lineSequence().any { it.trim() == "character_dict:" }
+                }
+            }.getOrDefault(false)
     }
 
-    suspend fun download(version: Version, report: (String) -> Unit): Boolean =
+    suspend fun download(
+        version: Version, report: (String) -> Unit, force: Boolean = false
+    ): Boolean =
         withContext(Dispatchers.IO) {
             val f = files(version)
             val parts = listOf(
@@ -54,7 +62,11 @@ class PaddleMobileModelStore(context: Context) {
                 for ((index, item) in parts.withIndex()) {
                     val (dest, repository, name) = item
                     val minimum = if (name.endsWith(".yml")) 10_000L else 1_000_000L
-                    if (dest.length() >= minimum) continue
+                    if (force) {
+                        dest.delete()
+                        File(dest.parentFile, dest.name + ".part").delete()
+                    }
+                    if (!force && dest.length() >= minimum) continue
                     val url = "https://huggingface.co/PaddlePaddle/" + repository +
                         "/resolve/main/" + name + "?download=true"
                     report(version.label + " 第 " + (index + 1) + "/3 項下載中…")

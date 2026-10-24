@@ -23,6 +23,8 @@ class PaddleMobileOcrProvider(private val context: Context) {
     private val lock = Mutex()
     private var loaded: PaddleMobileModelStore.Version? = null
     private var engine: PaddleOCR? = null
+    @Volatile var lastDiagnostic: String = "尚未執行 PaddleOCR"
+        private set
 
     suspend fun recognize(
         bitmap: Bitmap, selectedSource: String, version: PaddleMobileModelStore.Version
@@ -38,10 +40,18 @@ class PaddleMobileOcrProvider(private val context: Context) {
                 engine = PaddleOCR.create(
                     context,
                     PaddleOCRConfig(
-                        detLimitSideLen = 960,
+                        // Small labels often vanish with the previous 960px,
+                        // 0.60 box threshold and 0.32 recognition gate.
+                        // Use a sensitive detection pass, then reject dubious
+                        // text in the existing photo quality gate.
+                        detLimitSideLen = 1280,
                         detLimitType = "max",
                         detMaxSideLimit = 3000,
-                        recScoreThresh = 0.32f,
+                        detThresh = 0.20f,
+                        detBoxThresh = if (version == PaddleMobileModelStore.Version.V6)
+                            0.40f else 0.45f,
+                        detUnclipRatio = 1.4f,
+                        recScoreThresh = 0.16f,
                         recBatchSize = 1
                     ),
                     EngineConfig(numThreads = 4),
@@ -54,7 +64,7 @@ class PaddleMobileOcrProvider(private val context: Context) {
             val result = engine!!.recognize(bitmap)
             Log.i("CameraTranslator", version.label + " detected " +
                 result.results.size + " lines in " + result.totalTimeMs + "ms")
-            result.results.mapIndexedNotNull { index, item ->
+            val valid = result.results.mapIndexedNotNull { index, item ->
                 val word = item.text.trim()
                 val box = item.box.points
                 if (word.length < 2 || box.size != 4) return@mapIndexedNotNull null
@@ -62,7 +72,7 @@ class PaddleMobileOcrProvider(private val context: Context) {
                 val top = box.minOf { it.y }.toInt().coerceIn(0, bitmap.height)
                 val right = box.maxOf { it.x }.toInt().coerceIn(0, bitmap.width)
                 val bottom = box.maxOf { it.y }.toInt().coerceIn(0, bitmap.height)
-                if (right <= left || bottom <= top || item.confidence < 0.32f) {
+                if (right <= left || bottom <= top || item.confidence < 0.16f) {
                     return@mapIndexedNotNull null
                 }
                 val language = when {
@@ -81,6 +91,10 @@ class PaddleMobileOcrProvider(private val context: Context) {
                     imageHeight = bitmap.height
                 )
             }
+            lastDiagnostic = version.label + "：模型載入 " + engine!!.coldLoadTimeMs +
+                "ms，ONNX 推論 " + result.totalTimeMs + "ms，原始辨識 " +
+                result.results.size + " 段，有效 " + valid.size + " 段"
+            valid
         }
     }
 
