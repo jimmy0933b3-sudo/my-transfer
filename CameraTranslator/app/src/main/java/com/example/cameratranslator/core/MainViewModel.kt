@@ -429,10 +429,12 @@ class MainViewModel @Inject constructor(
         val totalStart = SystemClock.elapsedRealtime()
         val requestedSource = sourceLanguage
         val requestedTarget = targetLanguage
+        val mode = forcedMode ?: photoOcrMode
         _snapshotStatus.value = "正在確認照片與文字方向…"
         DiagnosticLog.record("PHOTO", "開始處理；解析度=" +
             inputBitmap.width + "x" + inputBitmap.height +
-            "；來源語言=" + requestedSource + "；OCR 模式=" + photoOcrMode)
+            "；來源語言=" + requestedSource + "；OCR 模式=" + mode +
+            if (forcedMode != null) "（本次比較；預設=" + photoOcrMode + "）" else "")
         val orientationStart = SystemClock.elapsedRealtime()
         val rotation = if (alreadyUpright) 0
             else photoOcr.suggestUprightRotation(inputBitmap, requestedSource)
@@ -445,7 +447,6 @@ class MainViewModel @Inject constructor(
         photoOcrDiagnostics = "辨識前校正：照片旋轉 " + rotation + "°"
         // Photo OCR is independent of translation selection. In offline mode
         // ONNX Runtime never contacts the Azure Worker or uploads the photo.
-        val mode = forcedMode ?: photoOcrMode
         val ocrStart = SystemClock.elapsedRealtime()
         val version = when (mode) {
             "mobile_v5" -> PaddleMobileModelStore.Version.V5
@@ -491,10 +492,47 @@ class MainViewModel @Inject constructor(
                 "；本張照片沒有通過有效文字條件，已退回 ML Kit"
             DiagnosticLog.record("PADDLE", photoOcrDiagnostics)
         }
+        // In auto mode, Paddle v5/v6 can successfully detect Latin/CJK
+        // boxes on a Thai photo while missing its Thai script completely.
+        // ML Kit already supplements Thai, but that route is bypassed when
+        // Paddle returns any boxes. Prefer verified Thai-script results in
+        // overlapping regions, retaining non-overlapping multilingual text.
+        // Never download a model silently during automatic photo processing.
+        val thaiSupplement = if (requestedSource == "auto" &&
+            !localPaddle.isNullOrEmpty() && thaiOcrModels.isModelInstalled()) {
+            try {
+                thaiOcrModels.recognize(bitmap)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                DiagnosticLog.record("OCR", "自動模式泰文補充辨識失敗，保留 Paddle 結果", e)
+                emptyList()
+            }
+        } else emptyList()
+        val supplementedPaddle = if (!localPaddle.isNullOrEmpty() &&
+            thaiSupplement.isNotEmpty()) {
+            val withoutConflicts = localPaddle.filterNot { candidate ->
+                val a = candidate.boundingBox ?: return@filterNot false
+                thaiSupplement.any { thai ->
+                    val b = thai.boundingBox ?: return@any false
+                    PhotoOcrOverlapPolicy.significantOverlap(
+                        a.left, a.top, a.right, a.bottom,
+                        b.left, b.top, b.right, b.bottom
+                    )
+                }
+            }
+            DiagnosticLog.record("OCR", "自動模式補充泰文 " + thaiSupplement.size +
+                " 段；移除衝突辨識 " + (localPaddle.size - withoutConflicts.size) + " 段")
+            (withoutConflicts + thaiSupplement).sortedWith(
+                compareBy({ it.boundingBox?.top ?: 0 }, { it.boundingBox?.left ?: 0 })
+            )
+        } else localPaddle
         val raw = when {
-            !localPaddle.isNullOrEmpty() -> {
-                actualPhotoOcrEngine = version!!.label + "（手機離線）"
-                localPaddle
+            !supplementedPaddle.isNullOrEmpty() -> {
+                actualPhotoOcrEngine = version!!.label +
+                    if (thaiSupplement.isNotEmpty()) "＋Tesseract 泰文（手機離線）"
+                    else "（手機離線）"
+                supplementedPaddle
             }
             else -> {
                 actualPhotoOcrEngine = if (requestedSource == "th")
