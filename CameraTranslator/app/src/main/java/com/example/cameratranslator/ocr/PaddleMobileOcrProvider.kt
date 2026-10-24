@@ -80,13 +80,21 @@ class PaddleMobileOcrProvider(private val context: Context) {
                 if (right <= left || bottom <= top || item.confidence < 0.16f) {
                     return@mapIndexedNotNull null
                 }
-                val language = when {
-                    selectedSource != "auto" -> selectedSource
+                val detectedScript = when {
                     word.any { it in '\u0e00'..'\u0e7f' } -> "th"
                     word.any { it in '\u3040'..'\u30ff' } -> "ja"
                     word.any { it in '\u3400'..'\u9fff' } -> "zh"
                     else -> "en"
                 }
+                // A Japanese (or Chinese) photo can also contain Latin-only
+                // labels and product logos. Honor the chosen photo language
+                // for mixed-script text but classify Latin-only OCR as English.
+                // This shares the ML Kit photo OCR's existing language policy.
+                val language = PhotoOcrLanguages.resolveBlockSource(
+                    word,
+                    selectedSource.takeUnless { it == "auto" },
+                    detectedScript
+                )
                 TextElement(
                     id = version.name + ":" + index + ":" + word.hashCode(),
                     originalText = word,
