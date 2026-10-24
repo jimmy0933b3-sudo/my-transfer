@@ -32,7 +32,7 @@ class CloudTranslationProvider {
     ): BatchResult = withContext(Dispatchers.IO) {
         if (token.length < 32 || texts.isEmpty() || texts.size > 6 ||
             texts.any { it.isBlank() || it.codePointCount(0, it.length) > 1500 } ||
-            texts.sumOf { it.codePointCount(0, it.length) } > 6000
+            texts.sumOf { it.codePointCount(0, it.length) } > 9000
         ) return@withContext BatchResult.Unavailable
 
         var connection: HttpsURLConnection? = null
