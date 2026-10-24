@@ -60,12 +60,13 @@ jobs:
     - name: Build Debug APK (development only)
       run: ./gradlew assembleDebug
 
-    - name: Upload Debug APK (not for updating installed release)
+    - name: Upload PR Debug APK (temporary test only)
+      if: github.event_name == 'pull_request'
       uses: actions/upload-artifact@v4
       with:
         name: CameraTranslator-debug
         path: CameraTranslator/app/build/outputs/apk/debug/app-debug.apk
-        retention-days: 30
+        retention-days: 1
 
     # Public forks' pull requests never receive production signing credentials.
     # A disposable test key validates the Gradle signing DSL before merging.
@@ -182,3 +183,62 @@ jobs:
     - name: Remove temporary keystores
       if: always()
       run: rm -f app/ci-release-key.jks app/ci-signing-test.jks
+
+  # Publish a single stable, public download URL for the LATEST signed APK.
+  # GitHub Actions artifacts expire; an updated Release asset remains until replaced.
+  publish_latest:
+    name: Publish one latest APK
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+    - name: Download freshly signed release APK
+      uses: actions/download-artifact@v4
+      with:
+        name: CameraTranslator-release-fixed-signature
+        path: latest-apk
+
+    - name: Publish or replace the stable latest APK
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        test -s latest-apk/app-release.apk
+        cp latest-apk/app-release.apk latest-apk/CameraTranslator-latest.apk
+        VERSION="$(unzip -p latest-apk/CameraTranslator-latest.apk 'META-INF/MANIFEST.MF' >/dev/null 2>&1 && echo 'Verified APK ZIP' || echo 'Signed APK')"
+        NOTES="Latest fixed-signature Android APK from master commit ${GITHUB_SHA}. Keeps the same signing certificate for upgrade installations. ${VERSION}."
+        if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          gh release upload latest latest-apk/CameraTranslator-latest.apk --clobber --repo "$GITHUB_REPOSITORY"
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/latest" -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          gh release edit latest --repo "$GITHUB_REPOSITORY" --title "CameraTranslator Latest APK" --notes "$NOTES" --latest
+        else
+          gh release create latest latest-apk/CameraTranslator-latest.apk --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "CameraTranslator Latest APK" --notes "$NOTES" --latest
+        fi
+        echo "Latest APK: https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/CameraTranslator-latest.apk"
+
+    - name: Delete older CameraTranslator Actions artifacts
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        # Only this app's CI artifacts. Never touch source files, tags,
+        # unrelated workflow artifacts, signing keys, or user data.
+        # The latest master Release artifact stays; the GitHub Release APK
+        # remains separately available via one permanent latest URL.
+        gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+          | jq -rs --arg run "$GITHUB_RUN_ID" '
+            .[].artifacts[]
+            | select(.name | startswith("CameraTranslator-"))
+            | select(
+                .name != "CameraTranslator-release-fixed-signature"
+                or ((.workflow_run.id | tostring) != $run)
+              )
+            | .id
+          ' \
+          | while read -r artifact_id; do
+            echo "Removing old CameraTranslator artifact ID ${artifact_id}"
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}" >/dev/null
+          done
