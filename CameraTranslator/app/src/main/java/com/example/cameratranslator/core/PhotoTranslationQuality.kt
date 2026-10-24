@@ -59,6 +59,10 @@ internal object PhotoTranslationQuality {
         if (input.length >= 7 && output.count { it.isLetterOrDigit() } <= 1) {
             return "譯文過短，可能只翻到碎片"
         }
+        if (target == "zh" && source in setOf("ja", "zh", "th") &&
+            input.length >= 20 && output.count { it.isLetterOrDigit() } <= 5) {
+            return "原文是長句，但譯文只有少數字，可能遺漏內容"
+        }
         if (output.length > input.length * 3 + 24 && input.length >= 5) {
             return "譯文異常過長"
         }
