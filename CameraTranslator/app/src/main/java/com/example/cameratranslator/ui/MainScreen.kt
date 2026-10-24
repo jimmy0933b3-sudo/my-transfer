@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.cameratranslator.camera.CameraPreviewScreen
 import com.example.cameratranslator.core.MainViewModel
+import com.example.cameratranslator.core.PhotoEngineSummary
 import com.example.cameratranslator.core.PhotoTranslationExport
 import com.example.cameratranslator.core.SnapshotOcrClipboard
 import com.example.cameratranslator.core.SnapshotTranslationLine
@@ -156,6 +157,7 @@ fun MainScreen(
 ) {
     val snapshotStatus by viewModel.snapshotStatus.collectAsState()
     val snapshotLines by viewModel.snapshotLines.collectAsState()
+    val photoEngineSummary = PhotoEngineSummary.describe(snapshotLines.map { it.provider })
     val originalPhoto by viewModel.snapshotOriginalPhoto.collectAsState()
     val translatedPhoto by viewModel.snapshotTranslatedPhoto.collectAsState()
     var showCapturedOriginal by remember { mutableStateOf(true) }
@@ -285,10 +287,8 @@ fun MainScreen(
                         Text("照片翻譯", fontWeight = FontWeight.SemiBold,
                             color = Color.White, fontSize = 17.sp)
                         Text(
-                            if (translatedPhoto != null)
-                                viewModel.actualPhotoOcrEngine + " · 翻譯完成"
-                            else if (originalPhoto != null)
-                                viewModel.actualPhotoOcrEngine
+                            if (translatedPhoto != null) "已完成 · 可儲存含引擎標籤的翻譯圖片"
+                            else if (originalPhoto != null) "正在辨識／翻譯…"
                             else "拍攝中",
                             color = Mint, fontSize = 11.sp, maxLines = 2
                         )
@@ -349,6 +349,28 @@ fun MainScreen(
                         }
                     }
 
+                    // Actual engines observed during THIS photo, not configured preferences.
+                    // Present beside the photo without covering its original text.
+                    if (originalPhoto != null) {
+                        Column(
+                            Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF253844))
+                                .padding(horizontal = 10.dp, vertical = 7.dp),
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Text(
+                                "OCR： " + viewModel.actualPhotoOcrEngine,
+                                color = Mint, fontSize = 12.sp, maxLines = 2
+                            )
+                            Text(
+                                "翻譯： " + photoEngineSummary,
+                                color = Color.White, fontSize = 12.sp,
+                                maxLines = 3, overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
                     // One short progress line, not a large banner that pushes the
                     // photo out of view. Empty OCR still shows the full captured image.
                     Text(
@@ -379,7 +401,9 @@ fun MainScreen(
                             enabled = translatedPhoto != null) {
                             val photo = translatedPhoto
                             if (photo != null) scope.launch(Dispatchers.IO) {
-                                val uri = PhotoTranslationExport.saveToGallery(context, photo)
+                                val uri = PhotoTranslationExport.saveToGallery(
+                                    context, photo, viewModel.actualPhotoOcrEngine, photoEngineSummary
+                                )
                                 withContext(Dispatchers.Main) {
                                     Toast.makeText(context,
                                         if (uri != null) "已存入相簿" else "儲存失敗",
@@ -390,7 +414,11 @@ fun MainScreen(
                         PhotoAction("↗", "分享",
                             enabled = translatedPhoto != null) {
                             try {
-                                translatedPhoto?.let { PhotoTranslationExport.share(context, it) }
+                                translatedPhoto?.let {
+                                    PhotoTranslationExport.share(
+                                        context, it, viewModel.actualPhotoOcrEngine, photoEngineSummary
+                                    )
+                                }
                             } catch (_: Exception) {
                                 Toast.makeText(context, "分享失敗", Toast.LENGTH_SHORT).show()
                             }
