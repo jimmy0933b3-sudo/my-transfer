@@ -3,9 +3,9 @@
 const languages = new Set(["auto", "en", "ja", "zh", "th"]);
 const MAX_CHARACTERS = 1500;
 const MAX_BODY_BYTES = 6000;
-const MAX_BATCH_BODY_BYTES = 24000;
+const MAX_BATCH_BODY_BYTES = 40000;
 const MAX_BATCH_ITEMS = 6;
-const MAX_BATCH_CHARS = 6000;
+const MAX_BATCH_CHARS = 9000;
 const UPSTREAM_TIMEOUT_MS = 8000;
 const WINDOW_MS = 60_000;
 const MAX_REQUESTS_PER_WINDOW = 25;
