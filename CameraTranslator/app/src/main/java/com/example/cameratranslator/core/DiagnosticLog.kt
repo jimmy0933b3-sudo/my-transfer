@@ -10,15 +10,15 @@ import java.util.Locale
 
 /**
  * App-scoped diagnostic events, not unrestricted system logcat.
- * Photo text is OFF by default. User opt-in permits short OCR / translation\n * snippets only in the private file (never in Logcat).
+ * OCR/translation text logging is enabled by default and may be disabled in Settings.\n * Raw photo text stays in private storage and is never written to Logcat.
  * Stored in private no-backup storage, with automatic size bounds.
  */
 object DiagnosticLog {
     private val lock = Any()
-    private const val MAX_BYTES = 1_500_000
-    private const val TRIM_CHARS = 1_000_000
+    private const val MAX_BYTES = 5_000_000
+    private const val TRIM_CHARS = 4_000_000
     private var target: File? = null
-    @Volatile private var includePhotoText = false
+    @Volatile private var includePhotoText = true
 
     fun photoTextEnabled(): Boolean = includePhotoText
 
@@ -32,16 +32,15 @@ object DiagnosticLog {
     }
 
     /**
-     * Per-block correlation, with actual OCR/translated text only if the
-     * user explicitly opts in. No raw photo bytes or credential content.
+     * Per-block full OCR/translation text, including unsuccessful results. The
+     * user can disable text logging. No raw image bytes or system Logcat.
      */
     fun photoBlock(
         stage: String, index: Int, language: String, text: String, info: String
     ) {
         val count = text.codePointCount(0, text.length)
         val visible = if (includePhotoText) {
-            "；文字=" + text.replace('\n', ' ').replace('\r', ' ')
-                .replace('\t', ' ').take(240)
+            "；文字=" + PhotoDiagnosticTextFormatter.escape(text)
         } else "；文字=隱藏（需設定同意）"
         record("PHOTO_BLOCK", "階段=" + stage.take(24) + "；編號=" + index +
             "；語言=" + language + "；字數=" + count +
@@ -57,16 +56,23 @@ object DiagnosticLog {
      */
     fun photoResult(
         index: Int, language: String, original: String, translated: String?,
-        stage: String, info: String
+        stage: String, info: String,
+        rawCandidate: String? = null, offlineCandidate: String? = null
     ) {
         val originalCount = original.codePointCount(0, original.length)
         val resultCount = translated?.codePointCount(0, translated.length) ?: 0
         val content = if (includePhotoText) {
-            fun excerpt(value: String) = value.replace("\n", "\\n")
-                .replace("\r", "\\r").replace("\t", " ").take(650)
-            "；OCR原文=" + excerpt(original) +
-                "；最終結果=" + (translated?.let(::excerpt) ?: "無（保留原文）")
-        } else "；OCR原文=隱藏（需設定同意）；最終結果=隱藏（需設定同意）"
+            "；OCR原文=" + PhotoDiagnosticTextFormatter.escape(original) +
+                "；原始候選譯文=" +
+                (rawCandidate?.let(PhotoDiagnosticTextFormatter::escape) ?: "無") +
+                "；離線重試譯文=" +
+                (offlineCandidate?.let(PhotoDiagnosticTextFormatter::escape) ?: "無") +
+                "；最終譯文=" +
+                (translated?.let(PhotoDiagnosticTextFormatter::escape) ?: "無（保留原文）")
+        } else {
+            "；OCR原文=已關閉文字診斷；原始候選譯文=已關閉文字診斷" +
+                "；離線重試譯文=已關閉文字診斷；最終譯文=已關閉文字診斷"
+        }
         record("PHOTO_RESULT", "階段=" + stage.take(32) +
             "；編號=" + index + "；語言=" + language.take(8) +
             "；原文字數=" + originalCount +
@@ -74,12 +80,11 @@ object DiagnosticLog {
             "；" + info.take(320) + content)
     }
 
-
     fun initialize(context: Context) {
         synchronized(lock) {
             includePhotoText = context.getSharedPreferences(
                 "translator_settings", Context.MODE_PRIVATE
-            ).getBoolean("photo_diagnostic_text", false)
+            ).getBoolean("photo_diagnostic_text", true)
             if (target == null) {
                 target = File(context.noBackupFilesDir, "camera-translator-diagnostics.log")
             }
@@ -100,7 +105,7 @@ object DiagnosticLog {
                 val trace = cause?.let { "\n" + it.stackTraceToString().take(6500) }.orEmpty()
                 val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z", Locale.US)
                     .format(Date())
-                val safe = DiagnosticLogSanitizer.sanitize((message + trace).take(8000))
+                val safe = DiagnosticLogSanitizer.sanitize((message + trace).take(24_000))
                 file.appendText("[" + time + "] [" + category.take(24) +
                     "] " + safe + "\n")
                 if (file.length() > MAX_BYTES) {
