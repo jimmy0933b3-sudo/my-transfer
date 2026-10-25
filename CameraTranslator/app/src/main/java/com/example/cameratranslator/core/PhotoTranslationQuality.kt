@@ -16,7 +16,11 @@ internal object PhotoTranslationQuality {
     private val kana = Regex("[\u3040-\u30ff]")
     private val han = Regex("[\u3400-\u9fff]")
     private val thai = Regex("[\u0e00-\u0e7f]")
-    private val numericToken = Regex("\\d+(?:[.,]\\d+)*")
+    // Only independently printed numerals are reliable. Paddle may misread
+    // the Japanese で10 as Latin debris such as Gi0 or C10. Treating the
+    // trailing 0 as a verified quantity rejected the correct "10 種" output.
+    // Guard both sides so regex cannot match the last digit of "Gi10".
+    private val numericToken = Regex("(?<![A-Za-z0-9])\\d+(?:[.,]\\d+)*(?![A-Za-z0-9])")
     private val thousandsSeparator = Regex(",(?=\\d{3}(?:\\D|$))")
     // Surface-form checks are not proof that a translation is semantically correct.
     private val japaneseNegativeEnding =
