@@ -746,6 +746,8 @@ class MainViewModel @Inject constructor(
             requestedSource != requestedTarget &&
                 block.sourceLanguage != requestedTarget &&
                 !block.ocrReviewNeeded &&
+                !(block.sourceLanguage == "th" &&
+                    com.example.cameratranslator.ocr.ThaiPhotoLinePolicy.isDateRange(original)) &&
                 PhotoTranslationQuality.rejectOcr(
                     original, block.sourceLanguage, block.ocrConfidence
                 ) == null &&
@@ -900,10 +902,18 @@ class MainViewModel @Inject constructor(
             val translated: String?
             val provider: String
             if (requestedSource == requestedTarget ||
-                brand || block.sourceLanguage == requestedTarget
+                brand || block.sourceLanguage == requestedTarget ||
+                (block.sourceLanguage == "th" &&
+                    com.example.cameratranslator.ocr.ThaiPhotoLinePolicy.isDateRange(original))
             ) {
                 translated = original
-                provider = if (brand) "品牌名稱保留原文" else "相同語言原文"
+                provider = when {
+                    brand -> "品牌名稱保留原文"
+                    block.sourceLanguage == "th" &&
+                        com.example.cameratranslator.ocr.ThaiPhotoLinePolicy.isDateRange(original) ->
+                        "日期數字保留原文"
+                    else -> "相同語言原文"
+                }
                 if (brand) brandPreserved++ else sameLanguagePreserved++
             } else {
                 val corrected = photoGlossary.lookup(
