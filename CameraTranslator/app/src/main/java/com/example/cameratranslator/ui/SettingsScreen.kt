@@ -491,9 +491,8 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                 Heading("07  /  DIAGNOSTICS", "診斷日誌（Log）",
                     "記錄 OpenCV、Paddle、OCR、照片處理與模型下載事件。" +
                     "只存於手機 App 私有空間，不會自動上傳。")
-                Text("預設完整記錄每一段 OCR 原文、ML Kit 比對文字、雲端及離線候選譯文、" +
-                    "最後接受或拒絕的譯文，失敗與不完整段落也保留。" +
-                    "只在手機 App 私有空間儲存，不自動上傳。",
+                Text("預設僅記錄辨識、翻譯與效能指標，不儲存照片上的完整文字。" +
+                    "如需排查 OCR 或錯譯問題，請自行開啟完整文字 Log；只存於手機私有空間，不自動上傳。",
                     color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
                 var photoTextDebug by remember {
                     mutableStateOf(DiagnosticLog.photoTextEnabled())
@@ -501,7 +500,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                 Row(Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("完整 OCR／譯文 Log（預設開啟）", color = Ink,
+                        Text("完整 OCR／譯文 Log（預設關閉）", color = Ink,
                             fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                         Text("記錄整段原文、原始候選譯文、離線重試譯文及最終譯文，包含失敗與保留原文的區塊。" +
                             "可能包含照片上的個資，複製分享前請先檢查；關閉不會刪除舊紀錄。",
