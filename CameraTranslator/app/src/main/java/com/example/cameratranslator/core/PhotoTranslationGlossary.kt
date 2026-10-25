@@ -45,6 +45,12 @@ internal object PhotoTranslationGlossary {
                 clean == "กระจ่างใส" -> "透亮"
                 clean in setOf("ในข้ามคืน", "ในบ้ามคืน") -> "一夜之間"
                 clean in setOf("ฝ้า กระ", "ฝ้า  กระ") -> "肝斑、雀斑"
+                // OCR may omit ฝ้า's tone mark. Only infer the skincare
+                // term when a separately detected dark-spot caption confirms
+                // the context, not for unrelated Thai package text.
+                clean == "ฝา กระ" &&
+                    photoContext.any { it in setOf("จุดด่างดำ", "จุดด่างดํา",
+                        "จุดดาวดา") } -> "肝斑、雀斑"
                 clean in setOf("จุดด่างดำ", "จุดด่างดํา", "จุดดาวดา") ->
                     "暗斑"
                 clean == "ดูจางลง" -> "逐漸淡化"
