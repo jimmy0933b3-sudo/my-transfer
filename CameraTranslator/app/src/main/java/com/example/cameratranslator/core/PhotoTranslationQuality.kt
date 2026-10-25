@@ -16,8 +16,17 @@ internal object PhotoTranslationQuality {
     private val han = Regex("[\u3400-\u9fff]")
     private val thai = Regex("[\u0e00-\u0e7f]")
 
-    fun rejectOcr(original: String, source: String): String? {
+    fun rejectOcr(
+        original: String, source: String, confidence: Float? = null
+    ): String? {
         val value = original.trim()
+        // Even a good Chinese translation is harmful when its OCR input was
+        // only a tiny low-confidence artifact (e.g. "Dh" or "Hんてi").
+        // Larger blocks still use the existing script and quality rules.
+        if (confidence != null && confidence < 0.45f &&
+            value.length <= 5 && source in setOf("ja", "en")) {
+            return "OCR 短文字信心過低"
+        }
         if (value.isEmpty() || value.count { it.isLetterOrDigit() } < 2) {
             return "辨識文字不足"
         }
