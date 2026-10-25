@@ -56,7 +56,7 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
         require(PhotoOcrLanguages.supported(selectedSource)) { "Unsupported photo OCR language" }
         if (selectedSource == "th") {
             val latinBlocks = read(latin, InputImage.fromBitmap(bitmap, 0), "en")
-            val rangePattern = Regex("""(?<![0-9])(?:[0-9๐-๙]{1,2})\\s*[-–—~]\\s*(?:[0-9๐-๙]{1,2})(?![0-9])""")
+            val rangePattern = Regex("""(?<![0-9])(?:[0-9๐-๙]{1,2})\s*[-–—~]\s*(?:[0-9๐-๙]{1,2})(?![0-9])""")
             val dateHints = latinBlocks.mapNotNull { item ->
                 val box = item.boundingBox ?: return@mapNotNull null
                 val numeric = rangePattern.find(item.originalText)?.value ?: return@mapNotNull null
