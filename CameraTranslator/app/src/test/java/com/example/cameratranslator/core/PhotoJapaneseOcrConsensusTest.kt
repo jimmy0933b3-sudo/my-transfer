@@ -110,4 +110,54 @@ class PhotoJapaneseOcrConsensusTest {
         )
         assertEquals(PhotoJapaneseOcrConsensus.Action.KEEP, result.action)
     }
+
+    @Test fun separateMlkitPiecesCorroborateOnePaddleLine() {
+        val decision = PhotoJapaneseOcrConsensus.evaluate(
+            block("集めたらチェックを入れよう", .81f, x = 0, w = 290),
+            listOf(
+                block("集めたら", x = 0, w = 103),
+                block("チェックを入れよう", x = 103, w = 187)
+            )
+        )
+        assertEquals(PhotoJapaneseOcrConsensus.Action.KEEP, decision.action)
+        assertEquals("readings_agree", decision.reason)
+        assertEquals(1f, decision.similarity!!, .001f)
+    }
+
+    @Test fun enclosingMlkitParagraphCanCorroborateWithoutReplacingPaddle() {
+        val decision = PhotoJapaneseOcrConsensus.evaluate(
+            block("集めたらチェックを入れよう", .72f, x = 10, y = 0, w = 290, h = 35),
+            listOf(block(
+                "みんなのコレクション！集めたらチェックを入れよう！いっぱい集めよう",
+                x = 0, y = 0, w = 310, h = 140
+            ))
+        )
+        assertEquals(PhotoJapaneseOcrConsensus.Action.KEEP, decision.action)
+        assertEquals("parent_paragraph_corroboration", decision.reason)
+        assertEquals(1f, decision.similarity!!, .001f)
+    }
+
+    @Test fun enclosingUnrelatedParagraphCannotOverridePaddle() {
+        val decision = PhotoJapaneseOcrConsensus.evaluate(
+            block("集めたらチェックを入れよう", .72f, x = 10, y = 0, w = 290, h = 35),
+            listOf(block("別の場所の注意書きと製品情報を掲載していますよ",
+                x = 0, y = 0, w = 310, h = 140))
+        )
+        assertEquals(PhotoJapaneseOcrConsensus.Action.KEEP, decision.action)
+        assertEquals("no_aligned_match", decision.reason)
+    }
+
+    @Test fun moderatelyWeakSevereConflictRequiresReviewOnlyWhenWellAligned() {
+        val conflict = PhotoJapaneseOcrConsensus.evaluate(
+            block("集めたらチェックを入れよう", .51f),
+            listOf(block("種類が全部そろいましたか？"))
+        )
+        assertEquals(PhotoJapaneseOcrConsensus.Action.REVIEW, conflict.action)
+        assertEquals("moderate_confidence_severe_disagreement", conflict.reason)
+        val confident = PhotoJapaneseOcrConsensus.evaluate(
+            block("集めたらチェックを入れよう", .90f),
+            listOf(block("種類が全部そろいましたか？"))
+        )
+        assertEquals(PhotoJapaneseOcrConsensus.Action.KEEP, confident.action)
+    }
 }
