@@ -157,4 +157,19 @@ class PhotoTranslationGlossaryTest {
         assertNull(PhotoTranslationGlossary.builtin(
             "手に入らない", "ja", "zh"))
     }
+
+    @Test fun trustedThaiFestivalTermsUseTaiwanChineseNames() {
+        assertEquals("泰國",
+            PhotoTranslationGlossary.builtin("ประเทศไทย .", "th", "zh"))
+        assertEquals("潑水節",
+            PhotoTranslationGlossary.builtin("เทศกาลสงกรานต์", "th", "zh"))
+        assertEquals("潑水節",
+            PhotoTranslationGlossary.builtin("เทศกาลสงกรชานตํ", "th", "zh"))
+        assertEquals("幸福",
+            PhotoTranslationGlossary.builtin("ความสุข", "th", "zh"))
+        assertNull(PhotoTranslationGlossary.builtin("เทศกาลอื่น", "th", "zh"))
+        assertNull(PhotoTranslationGlossary.builtin(
+            "ประเทศไทยอร่อยมาก", "th", "zh"))
+    }
+
 }
