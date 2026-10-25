@@ -33,13 +33,25 @@ internal object PhotoTranslationGlossary {
         val key = original.trim().lowercase(Locale.ROOT)
         if (target != "zh" || source !in setOf("en", "ja", "th", "auto")) return null
         if (source == "th") {
-            // Only well-attested complete Thai terms. Never patch a random
-            // substring in a sentence or infer missing dates from OCR noise.
+            // Complete, commonly used Thai cosmetic words and descriptions.
+            // A small dictionary of full phrases avoids context-free cloud
+            // mistranslations. Never replace substrings in unrelated sentences.
             val clean = original.trim().trimEnd('.', '。', '!', '！').trim()
             return when {
                 clean == "ประเทศไทย" -> "泰國"
                 clean == "ความสุข" -> "幸福"
                 clean == "เทศกาลสงกรานต์" -> "潑水節"
+                clean == "เผยผิวสว่าง" -> "展現明亮肌膚"
+                clean == "กระจ่างใส" -> "透亮"
+                clean in setOf("ในข้ามคืน", "ในบ้ามคืน") -> "一夜之間"
+                clean in setOf("ฝ้า กระ", "ฝ้า  กระ") -> "肝斑、雀斑"
+                clean in setOf("จุดด่างดำ", "จุดด่างดํา", "จุดดาวดา") ->
+                    "暗斑"
+                clean == "ดูจางลง" -> "逐漸淡化"
+                clean in setOf("รูขุมขนกระชับ", "รูVุมVนกระชับ") ->
+                    "毛孔緊緻"
+                clean in setOf("ริ้วรอยเล็ก", "รั้วรอยเล็ก") -> "細紋"
+                clean == "ดูเรียบเนียนขึ้น" -> "肌膚更平滑"
                 // A frequent OCR variation of the canonical Thai festival.
                 // Require the intact long prefix so unrelated words cannot
                 // be silently treated as Songkran.
@@ -49,6 +61,15 @@ internal object PhotoTranslationGlossary {
                     "潑水節"
                 else -> null
             }
+        }
+        if (source == "en" && target == "zh") {
+            // In mixed Thai/English package copy, "Mask" without context
+            // often becomes a facial covering instead of a skincare mask.
+            // Use printed neighboring text as independent contextual evidence.
+            val hasOvernight = photoContext.any { row ->
+                Regex("""(?i)\\bovernight\\b""").containsMatchIn(row)
+            }
+            if (key == "mask" && hasOvernight) return "面膜"
         }
         // Both signals are required. A generic Japanese sentence mentioning
         // a vehicle or a standalone "ピークル" must not be reinterpreted.
