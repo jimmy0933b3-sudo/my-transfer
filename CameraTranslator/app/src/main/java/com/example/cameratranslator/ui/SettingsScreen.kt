@@ -492,7 +492,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                     "記錄 OpenCV、Paddle、OCR、照片處理與模型下載事件。" +
                     "只存於手機 App 私有空間，不會自動上傳。")
                 Text("遇到故障後按「查看 Log」，再按「複製全部」。" +
-                    "預設只紀錄區塊編號、座標、信心分數、比對結果與拒絕原因，" +
+                    "預設會記錄原始 OCR、第二套辨識、品質驗證、譯文和實際替字結果的對應編號、座標與拒絕原因，" +
                     "不包含照片原文；下方可以暫時開啟文字診斷。",
                     color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
                 var photoTextDebug by remember {
@@ -503,7 +503,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                     Column(Modifier.weight(1f)) {
                         Text("詳細文字除錯（手動開啟）", color = Ink,
                             fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                        Text("開啟後每段 OCR 日文、譯文會寫入手機私人 Log。" +
+                        Text("開啟後每段原始 OCR、ML Kit 二次辨識、翻譯原文與譯文、最終照片替字都會寫入手機私人 Log。" +
                             "可能包含照片上的個資，複製分享前請先檢查；關閉不會刪除舊紀錄。",
                             color = ErrorColor, fontSize = 11.sp, lineHeight = 17.sp)
                     }
