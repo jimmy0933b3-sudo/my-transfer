@@ -156,11 +156,38 @@ class ThaiPhotoOcrProvider(private val context: Context) {
             check(tess.init(root.absolutePath, "tha")) {
                 "無法初始化泰文字形辨識引擎"
             }
-            // First try general layout, suitable for packaging and documents.
-            val first = recognizeLines(tess, bitmap, TessBaseAPI.PageSegMode.PSM_AUTO, 25f)
-            if (first.isNotEmpty()) return@withContext first
-            // A few isolated words on packages are often missed by PSM_AUTO.
-            recognizeLines(tess, bitmap, TessBaseAPI.PageSegMode.PSM_SPARSE_TEXT, 25f)
+            // General layout detects headlines, but an otherwise successful
+            // pass regularly misses small isolated dates on posters. Always
+            // run sparse mode as independent segmentation of the same bitmap.
+            val auto = recognizeLines(tess, bitmap, TessBaseAPI.PageSegMode.PSM_AUTO, 25f)
+            val sparse = recognizeLines(
+                tess, bitmap, TessBaseAPI.PageSegMode.PSM_SPARSE_TEXT, 25f
+            )
+            val merged = ThaiPhotoLinePolicy.merge(auto, sparse)
+            val trusted = merged.filter { line ->
+                line.confidence >= .55f ||
+                    (line.confidence >= .36f &&
+                        ThaiPhotoLinePolicy.corroborated(line, auto, sparse)) ||
+                    (line.confidence >= .30f &&
+                        ThaiPhotoLinePolicy.isCalendarLabel(line.text))
+            }
+            com.example.cameratranslator.core.DiagnosticLog.record(
+                "THAI_OCR", "AUTO候選=" + auto.size +
+                    "；SPARSE候選=" + sparse.size +
+                    "；去重合併=" + merged.size +
+                    "；信心通過=" + trusted.size
+            )
+            trusted.mapIndexed { index, line ->
+                TextElement(
+                    id = "th:" + index + ":" + line.text.hashCode(),
+                    originalText = line.text,
+                    sourceLanguage = "th",
+                    boundingBox = Rect(line.left, line.top, line.right, line.bottom),
+                    imageWidth = bitmap.width,
+                    imageHeight = bitmap.height,
+                    ocrConfidence = line.confidence
+                )
+            }
         } finally {
             tess.recycle()
         }
@@ -171,20 +198,20 @@ class ThaiPhotoOcrProvider(private val context: Context) {
         bitmap: Bitmap,
         pageMode: Int,
         minConfidence: Float
-    ): List<TextElement> {
+    ): List<ThaiPhotoLinePolicy.Line> {
         tess.setPageSegMode(pageMode)
         tess.setImage(bitmap)
         tess.getUTF8Text() // Force OCR before opening the result iterator.
         val iterator = tess.getResultIterator() ?: return emptyList()
         try {
-            val results = mutableListOf<TextElement>()
+            val results = mutableListOf<ThaiPhotoLinePolicy.Line>()
             val level = TessBaseAPI.PageIteratorLevel.RIL_TEXTLINE
             iterator.begin()
             do {
                 val text = iterator.getUTF8Text(level)?.trim().orEmpty()
                 val box = iterator.getBoundingRect(level)
                 val confidence = iterator.confidence(level)
-                if (ThaiModelIntegrity.isThaiLine(text) &&
+                if (ThaiPhotoLinePolicy.plausible(text) &&
                     confidence >= minConfidence && box != null && !box.isEmpty &&
                     box.left >= 0 && box.top >= 0 &&
                     box.right <= bitmap.width && box.bottom <= bitmap.height &&
@@ -193,20 +220,14 @@ class ThaiPhotoOcrProvider(private val context: Context) {
                     box.height() < bitmap.height * 0.5f
                 ) {
                     results.add(
-                        TextElement(
-                            id = "th:" + results.size + ":" + text.hashCode(),
-                            originalText = text,
-                            sourceLanguage = "th",
-                            boundingBox = Rect(box),
-                            imageWidth = bitmap.width,
-                            imageHeight = bitmap.height
-                        )
+                        ThaiPhotoLinePolicy.Line(text,
+                            box.left, box.top, box.right, box.bottom,
+                            (confidence / 100f).coerceIn(0f, 1f))
                     )
                 }
-            } while (iterator.next(level) && results.size < 32)
+            } while (iterator.next(level) && results.size < 48)
             return results
         } finally {
             iterator.delete()
         }
-    }
-}
+    }}
