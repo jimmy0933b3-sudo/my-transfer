@@ -4,12 +4,14 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Independent Japanese OCR cross-check. Paddle supplies confidence and ML Kit
- * supplies a second reading. A strong disagreement is NOT evidence that one
- * engine is always right: prefer a clean alternate only for low-confidence
- * Paddle, otherwise flag for manual review instead of painting guesses.
+ * Independent Japanese OCR readings are supporting evidence, not a vote.
  *
- * Pure Kotlin: no photo text is uploaded, logged, or saved by this classifier.
+ * On product sheets, furigana and rotated labels lead to different line
+ * segmentation: a smaller ML Kit annotation often overlaps a larger Paddle
+ * sentence. We must never reject or replace a confident main-text reading
+ * solely because a partially overlapping alternate has different characters.
+ *
+ * Pure Kotlin, with no image or OCR text persisted by this classifier.
  */
 internal object PhotoJapaneseOcrConsensus {
     data class Block(
@@ -20,10 +22,12 @@ internal object PhotoJapaneseOcrConsensus {
     data class Decision(
         val action: Action,
         val similarity: Float? = null,
-        val alternate: Block? = null
+        val alternate: Block? = null,
+        val reason: String = "no_aligned_match",
+        val intersectionOverUnion: Float? = null
     )
 
-    private val script = Regex("[\\u3040-\\u30ff\\u3400-\\u9fff]")
+    private val script = Regex("[\u3040-\u30ff\u3400-\u9fff]")
     private val suspiciousLatin = Regex("[A-Za-z]{4,}")
     private fun norm(value: String): String =
         value.filterNot { it.isWhitespace() || it in "、。・，．!?！？（）()「」『』" }
@@ -33,17 +37,20 @@ internal object PhotoJapaneseOcrConsensus {
         script.findAll(value).count() >= 2 &&
             !suspiciousLatin.containsMatchIn(value) && value.length in 2..180
 
-    private fun overlap(a: Block, b: Block): Float {
-        val width = min(a.right, b.right) - max(a.left, b.left)
-        val height = min(a.bottom, b.bottom) - max(a.top, b.top)
-        if (width <= 0 || height <= 0) return 0f
-        val small = min(
-            (a.right - a.left).coerceAtLeast(1).toLong() *
-                (a.bottom - a.top).coerceAtLeast(1),
-            (b.right - b.left).coerceAtLeast(1).toLong() *
-                (b.bottom - b.top).coerceAtLeast(1)
-        )
-        return width.toLong() * height / small.coerceAtLeast(1).toFloat()
+    /**
+     * IoU (rather than intersection / smaller-area) prevents matching the
+     * furigana or a short line INSIDE a full printed Japanese paragraph.
+     */
+    private fun intersectionOverUnion(a: Block, b: Block): Float {
+        val w = min(a.right, b.right) - max(a.left, b.left)
+        val h = min(a.bottom, b.bottom) - max(a.top, b.top)
+        if (w <= 0 || h <= 0) return 0f
+        val areaA = (a.right - a.left).coerceAtLeast(1).toLong() *
+            (a.bottom - a.top).coerceAtLeast(1)
+        val areaB = (b.right - b.left).coerceAtLeast(1).toLong() *
+            (b.bottom - b.top).coerceAtLeast(1)
+        val intersection = w.toLong() * h
+        return intersection / (areaA + areaB - intersection).coerceAtLeast(1).toFloat()
     }
 
     private fun similarity(a: String, b: String): Float {
@@ -65,27 +72,46 @@ internal object PhotoJapaneseOcrConsensus {
     }
 
     fun evaluate(paddle: Block, mlkit: List<Block>): Decision {
-        if (!scriptValid(paddle.text)) return Decision(Action.KEEP)
+        if (!scriptValid(paddle.text)) return Decision(Action.KEEP, reason = "not_japanese")
         val original = norm(paddle.text)
         val candidate = mlkit.asSequence()
-            .filter { scriptValid(it.text) && overlap(paddle, it) >= 0.60f }
-            // Don't confuse an ML Kit multi-line paragraph with one Paddle line.
+            .filter { scriptValid(it.text) }
+            .map { it to intersectionOverUnion(paddle, it) }
+            .filter { it.second >= 0.48f }
             .filter {
-                val size = norm(it.text).length
-                size in (original.length * 0.65f).toInt().coerceAtLeast(2)..
+                val len = norm(it.first.text).length
+                len in (original.length * 0.65f).toInt().coerceAtLeast(2)..
                     (original.length * 1.45f).toInt().coerceAtLeast(2)
             }
-            .maxByOrNull { overlap(paddle, it) }
-            ?: return Decision(Action.KEEP)
-        val score = similarity(original, norm(candidate.text))
-        if (score >= 0.74f || original.length < 5) {
-            return Decision(Action.KEEP, score, candidate)
+            .maxByOrNull { it.second }
+            ?: return Decision(Action.KEEP, reason = "no_aligned_match")
+
+        val alternate = candidate.first
+        val iou = candidate.second
+        val score = similarity(original, norm(alternate.text))
+        val confidence = paddle.confidence ?: 1f
+        if (score >= .74f || original.length < 5) {
+            // Accept corrections only when Paddle itself is genuinely
+            // uncertain and the readings almost agree. Strong Paddle keeps
+            // its own original typography even if the alternative differs.
+            if (confidence < .42f && original.length >= 5 && score >= .84f &&
+                original != norm(alternate.text) && iou >= .68f) {
+                return Decision(Action.REPLACE, score, alternate,
+                    "low_confidence_close_match", iou)
+            }
+            return Decision(Action.KEEP, score, alternate, "readings_agree", iou)
         }
-        // Disagreement in two sufficiently long readings: low-confidence
-        // Paddle gets an independent ML Kit alternative; otherwise preserve
-        // original pixels for inspection rather than trusting either guess.
-        return if ((paddle.confidence ?: 1f) < 0.58f) {
-            Decision(Action.REPLACE, score, candidate)
-        } else Decision(Action.REVIEW, score, candidate)
+        // OCR disagreements are not proof of error. On this toy collection
+        // sheet, 7-8 confident Japanese vehicle names were incorrectly
+        // blocked simply because ML Kit included ruby text or different lines.
+        if (confidence >= .42f) {
+            return Decision(Action.KEEP, score, alternate,
+                "disagreement_unverified", iou)
+        }
+        // Very weak Paddle AND a closely aligned disagreeing reader are
+        // genuinely ambiguous. Leave the pixels unchanged instead of
+        // replacing them with an unrelated Japanese phrase.
+        return Decision(Action.REVIEW, score, alternate,
+            "low_confidence_disagreement", iou)
     }
 }
