@@ -28,6 +28,23 @@ class PhotoTextBoxLayoutTest {
         assertTrue(partitioned[3].height >= 18)
     }
 
+    @Test fun v5MissingMiddleLineMustNotCauseTheNextPrintedLineToBeRejected() {
+        // From 2026-10-25 v1.6.28 real-device PP-OCRv5 logs. The missing
+        // second line failed numeric quality, leaving rows 9, 11 and 12.
+        // Previously 9/11 had a thin 20.4% overlap that was not partitioned,
+        // which grew into a renderer collision after 11/12 were partitioned.
+        val original = listOf(
+            box(977, 481, 1401, 616),
+            box(1081, 598, 1306, 686),
+            box(1027, 636, 1364, 749)
+        )
+        val planned = PhotoTextBoxLayout.partition(original).requireNoNulls()
+        assertEquals(3, planned.size)
+        assertTrue(planned.all { it.valid && it.height >= 18 })
+        assertTrue(planned[0].bottom <= planned[1].top)
+        assertTrue(planned[1].bottom <= planned[2].top)
+    }
+
     @Test fun lowerGiftPackHeadlinesArePartitionedWithoutDiscardingLines() {
         // v1.6.23 v6 text boxes from the right-hand metallic-version notice.
         val original = listOf(
