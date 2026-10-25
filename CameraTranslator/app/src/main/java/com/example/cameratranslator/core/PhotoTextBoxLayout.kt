@@ -39,7 +39,13 @@ internal object PhotoTextBoxLayout {
                 val smaller = min(
                     a.width.toLong() * a.height, b.width.toLong() * b.height
                 ).coerceAtLeast(1)
-                if (xOverlap.toLong() * yOverlap / smaller.toFloat() <= .23f) continue
+                // Thin intersections between staggered/diagonal printed rows
+                // can become *larger* fractions after another pair is split.
+                // A 0.23 threshold missed the first/third v5 headline rows,
+                // making a later renderer overlap reject a valid line.
+                // Keep the strict geometric checks below (x-alignment, text
+                // scale, center separation and minimum remaining height).
+                if (xOverlap.toLong() * yOverlap / smaller.toFloat() <= .17f) continue
                 // A corner touch, left/right columns, or neighboring cropped
                 // photo labels aren't a vertical paragraph.
                 if (xOverlap < min(a.width, b.width) * .72f) continue
