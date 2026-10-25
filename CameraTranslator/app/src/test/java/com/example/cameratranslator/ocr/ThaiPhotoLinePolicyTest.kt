@@ -103,6 +103,31 @@ class ThaiPhotoLinePolicyTest {
         assertTrue(ThaiPhotoLinePolicy.recoveryRegions(emptyList(), 720, 1544).isEmpty())
     }
 
+    @Test fun convertsAnyValidThaiDateRangeWithoutCloudNumericDrift() {
+        assertEquals("4月13日至15日",
+            ThaiPhotoLinePolicy.translateCalendarLabel("13-15 เมษายน"))
+        assertEquals("4月13日至15日",
+            ThaiPhotoLinePolicy.translateCalendarLabel("๑๓–๑๕ เมษายน"))
+        assertEquals("12月30日至31日",
+            ThaiPhotoLinePolicy.translateCalendarLabel("30—31 ธันวาคม"))
+        assertEquals(null,
+            ThaiPhotoLinePolicy.translateCalendarLabel("13-15 ความสุข"))
+        assertEquals(null,
+            ThaiPhotoLinePolicy.translateCalendarLabel("13-32 เมษายน"))
+        assertEquals(null,
+            ThaiPhotoLinePolicy.translateCalendarLabel("16-15 เมษายน"))
+    }
+
+    @Test fun rejectsMultiplePosterRowsPackedIntoOneOcrLine() {
+        val threeRows = line("ประเทศไทยเทศกาลสงกรานต์ความสุข",
+            14, 557, 696, 263)
+        val validTitle = line("ประเทศไทย", 123, 557, 466, 79)
+        assertFalse(ThaiPhotoLinePolicy.plausibleLineGeometry(threeRows, 720))
+        assertTrue(ThaiPhotoLinePolicy.plausibleLineGeometry(validTitle, 720))
+        assertTrue(ThaiPhotoLinePolicy.plausibleLineGeometry(
+            line("13-15 เมษายน", 261, 878, 201, 20), 720))
+    }
+
     @Test fun numericDateHintIsJoinedOnlyWithGenuineNearbyThaiMonth() {
         val month = line("เมษายน", 370, 865, 135, 38, .91f)
         val number = line("13–15", 265, 862, 96, 44, .92f)
