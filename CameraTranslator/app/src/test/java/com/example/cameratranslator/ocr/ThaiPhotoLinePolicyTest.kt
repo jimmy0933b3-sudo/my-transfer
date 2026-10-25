@@ -142,4 +142,48 @@ class ThaiPhotoLinePolicyTest {
             listOf(other), listOf(number)))
     }
 
+
+    @Test fun songkranPosterPrefersReadableThaiOverHighConfidenceGibberish() {
+        // Real 22:28 Tesseract AUTO vs SPARSE evidence, same printed line.
+        val readable = line("ประเทศไทย .", 123, 557, 573, 103, .8371057f)
+        val gibberish = line("ๆ|]ชะเทศไทย", 123, 557, 466, 79, .900147f)
+        assertFalse(ThaiPhotoLinePolicy.plausible(gibberish.text))
+        assertEquals(listOf(readable),
+            ThaiPhotoLinePolicy.merge(listOf(readable), listOf(gibberish)))
+    }
+
+    @Test fun rejectHighCombiningMarkDensityInFakePosterLine() {
+        val fake = "ไฝฮไัึื3ั1นจน1นพนแพพนพแพพไไพพไไทไไไ็ืี็ัึัึัึัึััึึืึ3จ3"
+        assertFalse(ThaiPhotoLinePolicy.plausible(fake))
+        assertTrue(ThaiPhotoLinePolicy.plausible("เทศกาลสงกรชานตํ"))
+        assertTrue(ThaiPhotoLinePolicy.plausible("ความสุข"))
+    }
+
+    @Test fun thaiPaddleOverridesOnlySameVisualLineAndKeepsSeparatePosterRows() {
+        val tesseract = listOf(
+            line("ประเทศไทย .", 123, 557, 573, 103, .83f),
+            line("ความสุข", 199, 747, 318, 73, .92f)
+        )
+        val paddle = listOf(
+            line("ประเทศไทย", 124, 557, 570, 100, .95f),
+            line("เทศกาลสงกรานต์", 16, 655, 684, 65, .90f)
+        )
+        val fused = ThaiPhotoLinePolicy.combineIndependent(tesseract, paddle)
+        assertEquals(3, fused.size)
+        assertEquals("ประเทศไทย", fused.first().text)
+        assertTrue(fused.any { it.text == "เทศกาลสงกรานต์" })
+        assertTrue(fused.any { it.text == "ความสุข" })
+    }
+
+    @Test fun damagedDateRepairRequiresBothVisibleDigitsAndRecognizedMonth() {
+        assertEquals("13-15 เมษายน",
+            ThaiPhotoLinePolicy.normalizeCalendarLabel("13-1ไ5 เมษายน"))
+        assertEquals("4月13日至15日",
+            ThaiPhotoLinePolicy.translateCalendarLabel("13-1ไ5 เมษายน"))
+        assertEquals("13-1ไ5 สิ่งอื่น",
+            ThaiPhotoLinePolicy.normalizeCalendarLabel("13-1ไ5 สิ่งอื่น"))
+        assertEquals("13-1ไ เมษายน",
+            ThaiPhotoLinePolicy.normalizeCalendarLabel("13-1ไ เมษายน"))
+    }
+
 }
