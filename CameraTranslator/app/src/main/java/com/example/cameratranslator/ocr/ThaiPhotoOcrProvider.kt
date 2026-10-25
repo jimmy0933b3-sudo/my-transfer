@@ -391,7 +391,11 @@ class ThaiPhotoOcrProvider(private val context: Context) {
                     box.left >= 0 && box.top >= 0 &&
                     box.right <= bitmap.width && box.bottom <= bitmap.height &&
                     box.width() >= 10 && box.height() >= 10 &&
-                    box.width() < bitmap.width * 0.92f &&
+                    // Posters legitimately print a title across nearly the
+                    // entire width (the Songkran second line uses ~96%).
+                    // Multi-row hallucinations are instead rejected by the
+                    // single-line height guard below.
+                    box.width() < bitmap.width * 0.99f &&
                     box.height() < bitmap.height * 0.5f
                 ) {
                     val candidate = ThaiPhotoLinePolicy.Line(text,
