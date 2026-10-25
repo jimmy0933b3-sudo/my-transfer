@@ -13,7 +13,7 @@ internal object PhotoOcrLanguages {
      */
     fun resolveBlockSource(text: String, forced: String?, scriptDetected: String): String {
         val letters = text.filter(Char::isLetter)
-        if (forced in setOf("ja", "zh") && letters.isNotEmpty() &&
+        if (forced in setOf("ja", "zh", "th") && letters.isNotEmpty() &&
             letters.all { it in 'A'..'Z' || it in 'a'..'z' }
         ) return "en"
         return forced ?: scriptDetected
