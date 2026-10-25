@@ -49,4 +49,14 @@ class PhotoOcrLanguagesTest {
             "zh", PhotoOcrLanguages.resolveBlockSource("邦尼熊", null, "zh")
         )
     }
+    @Test fun latinHeadlinesOnThaiPhotosKeepTheirActualEnglishSource() {
+        listOf("Himalaya", "Secret", "Gold", "Overnight", "Mask").forEach {
+            org.junit.Assert.assertEquals("en",
+                PhotoOcrLanguages.resolveBlockSource(it, "th", "en"))
+        }
+        org.junit.Assert.assertEquals("th",
+            PhotoOcrLanguages.resolveBlockSource("เผยผิวสว่าง", "th", "th"))
+        org.junit.Assert.assertEquals("th",
+            PhotoOcrLanguages.resolveBlockSource("รูVุมVนกระชับ", "th", "th"))
+    }
 }

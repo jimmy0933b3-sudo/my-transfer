@@ -28,6 +28,17 @@ internal object PhotoBrandPolicy {
                 literalMark.all { it in 'A'..'Z' || it.isDigit() }) return true
             if (token.matches(Regex("(?i)^(?:ver\\.?|tm|©|®|™)$"))) return true
         }
+        // Short English marketing copy often uses title case. "Secret Gold
+        // Overnight" describes a product and must not be kept as a logo just
+        // because every word is capitalized, unlike "Takara Tomy".
+        val descriptiveEnglish = setOf(
+            "secret", "gold", "overnight", "mask", "skin", "smooth",
+            "bright", "brightening", "serum", "cream", "repair"
+        )
+        if (sourceLanguage == "en" &&
+            text.split(Regex("\\s+")).any {
+                it.trim(',', '.', '!', '?', '-', '®').lowercase() in descriptiveEnglish
+            }) return false
         val words = text.trim().split(Regex("\\s+"))
         if (words.size !in 2..4) return false
         if (!text.all { it.isLetter() || it.isWhitespace() || it in "-®©.&" }) return false

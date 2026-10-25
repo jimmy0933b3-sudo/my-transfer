@@ -172,4 +172,43 @@ class PhotoTranslationGlossaryTest {
             "ประเทศไทยอร่อยมาก", "th", "zh"))
     }
 
+
+    @Test fun thaiSkincareWordsMustNotBecomeRandomLiteralChinese() {
+        val cases = mapOf(
+            "เผยผิวสว่าง" to "展現明亮肌膚",
+            "กระจ่างใส" to "透亮",
+            "ในบ้ามคืน" to "一夜之間",
+            "ฝ้า กระ" to "肝斑、雀斑",
+            "จุดดาวดา" to "暗斑",
+            "ดูจางลง" to "逐漸淡化",
+            "รูVุมVนกระชับ" to "毛孔緊緻",
+            "รั้วรอยเล็ก" to "細紋",
+            "ดูเรียบเนียนขึ้น" to "肌膚更平滑"
+        )
+        cases.forEach { (thai, expected) ->
+            assertEquals(thai, expected,
+                PhotoTranslationGlossary.builtin(thai, "th", "zh"))
+        }
+        assertNull(PhotoTranslationGlossary.builtin(
+            "ดูจางลงและดีกว่าเดิม", "th", "zh"))
+        assertNull(PhotoTranslationGlossary.builtin(
+            "รูVุมVนกระชับ", "th", "en"))
+    }
+
+    @Test fun missingThaiToneMarkNeedsIndependentSkincareEvidence() {
+        assertEquals("肝斑、雀斑", PhotoTranslationGlossary.builtin(
+            "ฝา กระ", "th", "zh", listOf("จุดดาวดา", "ฝา กระ")))
+        assertNull(PhotoTranslationGlossary.builtin(
+            "ฝา กระ", "th", "zh", listOf("ฝา กระ")))
+    }
+
+    @Test fun englishMaskSenseNeedsPhotoContext() {
+        assertEquals("面膜",
+            PhotoTranslationGlossary.builtin(
+                "Mask", "en", "zh", listOf("Secret Gold Overnight", "Mask")
+            ))
+        assertNull(PhotoTranslationGlossary.builtin(
+            "Mask", "en", "zh", listOf("Mask", "Halloween party")))
+    }
+
 }

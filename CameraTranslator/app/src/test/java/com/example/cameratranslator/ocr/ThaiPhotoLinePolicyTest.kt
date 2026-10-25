@@ -186,4 +186,12 @@ class ThaiPhotoLinePolicyTest {
             ThaiPhotoLinePolicy.normalizeCalendarLabel("13-1ไ เมษายน"))
     }
 
+    @Test fun paddedOcrColumnNoiseIsNotATranslatableThaiSentence() {
+        assertFalse(ThaiPhotoLinePolicy.plausible(
+            "ั                            รหมหนกระชับ"))
+        assertFalse(ThaiPhotoLinePolicy.plausible(
+            "ดูจาวลง           5      ล"))
+        assertTrue(ThaiPhotoLinePolicy.plausible("รูขุมขนกระชับ"))
+        assertTrue(ThaiPhotoLinePolicy.plausible("ริ้วรอยเล็ก"))
+    }
 }

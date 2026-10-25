@@ -71,18 +71,12 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
             // Dedicated official Thai PP-OCRv5 recognizer, if downloaded,
             // provides independent glyph evidence. v5/v6 Chinese/Japanese
             // recognizers cannot be reused for Thai.
-            val paddleLines = if (thaiPaddle.store.ready(
+            val paddleBlocks = if (thaiPaddle.store.ready(
                     PaddleMobileModelStore.Version.THAI)) {
                 try {
                     thaiPaddle.recognize(
                         bitmap, "th", PaddleMobileModelStore.Version.THAI
-                    ).mapNotNull { item ->
-                        val box = item.boundingBox ?: return@mapNotNull null
-                        if (item.sourceLanguage != "th") return@mapNotNull null
-                        ThaiPhotoLinePolicy.Line(item.originalText,
-                            box.left, box.top, box.right, box.bottom,
-                            item.ocrConfidence ?: 0f)
-                    }
+                    )
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -97,7 +91,42 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
                 )
                 emptyList()
             }
-            lastThaiPaddleUsed = paddleLines.isNotEmpty()
+            val paddleLines = paddleBlocks.mapNotNull { item ->
+                val box = item.boundingBox ?: return@mapNotNull null
+                if (item.sourceLanguage != "th") return@mapNotNull null
+                ThaiPhotoLinePolicy.Line(item.originalText,
+                    box.left, box.top, box.right, box.bottom,
+                    item.ocrConfidence ?: 0f)
+            }
+            // English product labels printed among Thai copy are independent
+            // source-language blocks. This branch used to discard them.
+            val paddleEnglish = paddleBlocks.mapNotNull { item ->
+                val box = item.boundingBox ?: return@mapNotNull null
+                if (item.sourceLanguage != "en") return@mapNotNull null
+                ThaiPhotoMixedScriptPolicy.Block(
+                    item.originalText, box.left, box.top, box.right, box.bottom,
+                    item.ocrConfidence ?: 0f
+                )
+            }.filter(ThaiPhotoMixedScriptPolicy::reliableEnglishCandidate)
+            val fallbackEnglish = if (paddleBlocks.isEmpty()) {
+                latinBlocks.mapNotNull { item ->
+                    val box = item.boundingBox ?: return@mapNotNull null
+                    // ML Kit on Thai letters is less trustworthy. Use only
+                    // intact multiword Latin phrases without any digits.
+                    val englishWords = Regex("[A-Za-z]{3,}")
+                        .findAll(item.originalText).count()
+                    if (englishWords < 2 || item.originalText.any(Char::isDigit))
+                        return@mapNotNull null
+                    ThaiPhotoMixedScriptPolicy.Block(
+                        item.originalText, box.left, box.top, box.right,
+                        box.bottom, .9f
+                    )
+                }.filter(ThaiPhotoMixedScriptPolicy::reliableEnglishCandidate)
+            } else emptyList()
+            val english = ThaiPhotoMixedScriptPolicy.groupEnglish(
+                paddleEnglish.ifEmpty { fallbackEnglish }
+            )
+            lastThaiPaddleUsed = paddleBlocks.isNotEmpty()
             val compared = if (paddleLines.isEmpty()) thaiLines else {
                 ThaiPhotoLinePolicy.combineIndependent(
                     thaiLines.mapNotNull { item ->
@@ -140,6 +169,31 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
                 )
                 urls.any { ThaiPhotoLinePolicy.masksThaiLine(candidate, it) }
             }
+            val mixedScriptSafe = safeLines.filterNot { item ->
+                val box = item.boundingBox ?: return@filterNot false
+                ThaiPhotoMixedScriptPolicy.isLatinHallucination(
+                    ThaiPhotoMixedScriptPolicy.Block(
+                        item.originalText, box.left, box.top,
+                        box.right, box.bottom, item.ocrConfidence ?: 0f
+                    ), paddleEnglish
+                )
+            }
+            val englishElements = english.mapIndexed { i, line ->
+                TextElement(
+                    id = "en:thai-photo:" + i + ":" + line.text.hashCode(),
+                    originalText = line.text,
+                    sourceLanguage = "en",
+                    boundingBox = Rect(line.left, line.top, line.right, line.bottom),
+                    imageWidth = bitmap.width, imageHeight = bitmap.height,
+                    ocrConfidence = line.confidence
+                )
+            }
+            com.example.cameratranslator.core.DiagnosticLog.record(
+                "THAI_MIXED_SCRIPT",
+                "Paddle英文候選=" + paddleEnglish.size +
+                    "；英文語意框=" + englishElements.size +
+                    "；同區泰文幻覺排除=" + (safeLines.size - mixedScriptSafe.size)
+            )
             com.example.cameratranslator.core.DiagnosticLog.record(
                 "THAI_OCR", "拉丁網址證據=" + urls.size +
                     "；網址區域誤辨排除=" + (compared.size - safeLines.size)
@@ -149,7 +203,7 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
                     "；泰文逐行輸出=" + safeLines.size +
                     "；禁止跨行段落合併=true"
             )
-            safeLines.forEachIndexed { index, line ->
+            mixedScriptSafe.forEachIndexed { index, line ->
                 val box = line.boundingBox
                 com.example.cameratranslator.core.DiagnosticLog.photoBlock(
                     "THAI_FINAL", index, "th", line.originalText,
@@ -160,7 +214,9 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
             // Thai page-segmentation already yields printed lines. Joining them
             // again across nearby baselines turns three poster headings into
             // one giant rectangle and destroys the correct paint geometry.
-            return safeLines
+            return (mixedScriptSafe + englishElements)
+                .sortedWith(compareBy<TextElement> { it.boundingBox?.top ?: 0 }
+                    .thenBy { it.boundingBox?.left ?: 0 })
         }
         val mlKit = mergePhotoParagraphs(
             extract(InputImage.fromBitmap(bitmap, 0), selectedSource).map {
