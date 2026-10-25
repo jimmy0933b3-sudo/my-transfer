@@ -211,4 +211,41 @@ class PhotoTranslationGlossaryTest {
             "Mask", "en", "zh", listOf("Mask", "Halloween party")))
     }
 
+
+    @Test fun independentEnglishProductLabelsDisambiguateThaiTransliterationAndBrand() {
+        val actualPhoto = listOf(
+            "หิมาลายา ซีเครห โกลด์ โอเวอร์ในห์ มาส์ก",
+            "Himalaya",
+            "Secret Gold Overnight",
+            "Mask",
+            "Himalaya Secret Gold",
+            "เผยผิวสว่าง"
+        )
+        assertEquals("喜馬拉雅 Secret Gold 晚安面膜",
+            PhotoTranslationGlossary.builtin(actualPhoto[0], "th", "zh", actualPhoto))
+        assertEquals("喜馬拉雅",
+            PhotoTranslationGlossary.builtin("Himalaya", "en", "zh", actualPhoto))
+        assertEquals("Secret Gold 晚安",
+            PhotoTranslationGlossary.builtin(
+                "Secret Gold Overnight", "en", "zh", actualPhoto))
+        assertEquals("喜馬拉雅 Secret Gold",
+            PhotoTranslationGlossary.builtin(
+                "Himalaya Secret Gold", "en", "zh", actualPhoto))
+        assertEquals("面膜",
+            PhotoTranslationGlossary.builtin("Mask", "en", "zh", actualPhoto))
+    }
+
+    @Test fun unrelatedGeographyOrUnverifiedThaiPhoneticsNeverGetProductOverride() {
+        val unsupported = listOf("Himalaya", "Secret Gold Overnight", "Mountain")
+        val thai = "หิมาลายา ซีเครห โกลด์ โอเวอร์ในห์ มาส์ก"
+        assertNull(PhotoTranslationGlossary.builtin("Himalaya", "en", "zh", unsupported))
+        assertNull(PhotoTranslationGlossary.builtin(thai, "th", "zh", unsupported))
+        assertNull(PhotoTranslationGlossary.builtin(
+            "Himalaya", "en", "zh", listOf("Himalaya", "Mask")))
+        assertNull(PhotoTranslationGlossary.builtin(
+            "Secret Gold Overnight", "en", "zh", listOf("Mask", "Overnight")))
+        assertNull(PhotoTranslationGlossary.builtin(
+            "Himalaya", "en", "en",
+            listOf("Himalaya", "Secret Gold Overnight", "Mask")))
+    }
 }
