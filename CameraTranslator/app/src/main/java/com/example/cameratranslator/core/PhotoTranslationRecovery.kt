@@ -27,8 +27,18 @@ internal object PhotoTranslationRecovery {
         offlineReady: Boolean,
         translateOffline: suspend () -> String?
     ): Result {
-        val rejection = translation?.let {
-            PhotoTranslationQuality.rejectTranslation(original, it, source, target)
+        val rejection = translation?.let { candidate ->
+            // A cloud/offline echo is not evidence of a successful translation.
+            // Japanese kanji-only titles may legitimately stay identical in
+            // Chinese; deliberately preserved trademarks and user corrections
+            // are handled by their own providers and remain unchanged.
+            val untranslatedEcho = source != target &&
+                provider in setOf("Azure 雲端", "ML Kit 離線") &&
+                original.trim() == candidate.trim() &&
+                (source in setOf("en", "th") ||
+                    (source == "ja" && candidate.any { it in '\u3040'..'\u30ff' }))
+            if (untranslatedEcho) "譯文與原文相同，疑似未翻譯"
+            else PhotoTranslationQuality.rejectTranslation(original, candidate, source, target)
         }
         if (rejection == null) {
             return Result(translation, provider)
