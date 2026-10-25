@@ -32,12 +32,28 @@ internal object PhotoTranslationGlossary {
     ): String? {
         val key = original.trim().lowercase(Locale.ROOT)
         if (target != "zh" || source !in setOf("en", "ja", "th", "auto")) return null
+        // Independently OCR'd English product title, subtitle, and packaging
+        // caption agree on the full meaning. The Thai phonetic title alone is
+        // an unreliable translation input (e.g. "奧維寧面具"). Require all
+        // three English clues so unrelated Thai ads never inherit this brand.
+        val verifiedOvernightMask = photoContext.any {
+            it.equals("Himalaya", ignoreCase = true)
+        } && photoContext.any {
+            it.equals("Secret Gold Overnight", ignoreCase = true)
+        } && photoContext.any {
+            it.equals("Mask", ignoreCase = true)
+        }
         if (source == "th") {
             // Complete, commonly used Thai cosmetic words and descriptions.
             // A small dictionary of full phrases avoids context-free cloud
             // mistranslations. Never replace substrings in unrelated sentences.
             val clean = original.trim().trimEnd('.', '。', '!', '！').trim()
             return when {
+                verifiedOvernightMask &&
+                    clean.startsWith("หิมาลายา ") &&
+                    clean.contains("โกลด์") &&
+                    clean.endsWith("มาส์ก") ->
+                    "喜馬拉雅 Secret Gold 晚安面膜"
                 clean == "ประเทศไทย" -> "泰國"
                 clean == "ความสุข" -> "幸福"
                 clean == "เทศกาลสงกรานต์" -> "潑水節"
@@ -69,6 +85,16 @@ internal object PhotoTranslationGlossary {
             }
         }
         if (source == "en" && target == "zh") {
+            // "Himalaya" is a brand printed repeatedly with a product series.
+            // Without independent package evidence, keep the ordinary cloud
+            // translation (e.g. geography) rather than guessing a brand.
+            if (verifiedOvernightMask) {
+                when (key) {
+                    "himalaya" -> return "喜馬拉雅"
+                    "secret gold overnight" -> return "Secret Gold 晚安"
+                    "himalaya secret gold" -> return "喜馬拉雅 Secret Gold"
+                }
+            }
             // In mixed Thai/English package copy, "Mask" without context
             // often becomes a facial covering instead of a skincare mask.
             // Use printed neighboring text as independent contextual evidence.
