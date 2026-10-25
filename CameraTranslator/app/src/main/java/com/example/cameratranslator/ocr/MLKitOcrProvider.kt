@@ -91,6 +91,19 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
                 "THAI_OCR", "拉丁網址證據=" + urls.size +
                     "；網址區域誤辨排除=" + (thaiLines.size - safeLines.size)
             )
+            com.example.cameratranslator.core.DiagnosticLog.record(
+                "THAI_OCR", "網址安全過濾後=" + safeLines.size +
+                    "；泰文逐行輸出=" + safeLines.size +
+                    "；禁止跨行段落合併=true"
+            )
+            safeLines.forEachIndexed { index, line ->
+                val box = line.boundingBox
+                com.example.cameratranslator.core.DiagnosticLog.photoBlock(
+                    "THAI_FINAL", index, "th", line.originalText,
+                    "框=" + (box?.toShortString() ?: "無") +
+                        "；信心=" + (line.ocrConfidence?.toString() ?: "無")
+                )
+            }
             // Thai page-segmentation already yields printed lines. Joining them
             // again across nearby baselines turns three poster headings into
             // one giant rectangle and destroys the correct paint geometry.
