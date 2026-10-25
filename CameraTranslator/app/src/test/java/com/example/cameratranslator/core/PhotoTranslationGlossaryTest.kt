@@ -99,4 +99,62 @@ class PhotoTranslationGlossaryTest {
             PhotoTranslationGlossary.builtin(
                 "ケントダッシュバギー", "ja", "zh", collectionSheet))
     }
+
+    @Test fun v5PhotoContextCanBeConfirmedByIndependentMlkitTitle() {
+        val paddleV5 = listOf("パウ・パトロール", "コクシンシート",
+            "タイキヤストビークルは", "ギトパツ限定カラービール")
+        assertFalse(PhotoTranslationGlossary.isPawCollectionSheet(paddleV5))
+        val combined = paddleV5 + listOf("コレクションシート")
+        assertTrue(PhotoTranslationGlossary.isPawCollectionSheet(combined))
+        val expected = mapOf(
+            "コクシンシート" to "收藏清單",
+            "集め口にを入よう!" to "收集到後，請在方框打勾！",
+            "タイキヤストビークルは" to "合金小車",
+            "全部Gi0種類！" to "共有 10 種！",
+            "牛三は全部" to "你能全部",
+            "集められるかな子" to "收集齊全嗎？",
+            "マーンルアイートラリク" to "毛毛消防車",
+            "チエイスポリスカー" to "阿奇警車",
+            "スカイコライングヘリ" to "天天直升機",
+            "ラゴルパーゴルドーー" to "小礫推土機",
+            "ロツキーリーンルーー" to "灰灰回收車",
+            "ケントッシンバ" to "萊德越野車",
+            "ギトパツ限定カラービール" to "禮盒限定配色小車",
+            "スハシヤルなメタリック.の" to "特別金屬色版本",
+            "ラブルパーブドーザーメタリツ" to "小礫推土機金屬色版",
+            "ビークルだよ！" to "就是這款小車！"
+        )
+        expected.forEach { (original, translation) ->
+            assertEquals(original, translation,
+                PhotoTranslationGlossary.builtin(original, "ja", "zh", combined))
+        }
+    }
+
+    @Test fun v5TyposDoNotTriggerWithoutBothIndependentPhotoSignals() {
+        val brandOnly = listOf("パウ・パトロール", "コクシンシート")
+        val titleOnly = listOf("コレクションシート", "ダイキャスト")
+        assertFalse(PhotoTranslationGlossary.isPawCollectionSheet(brandOnly))
+        assertFalse(PhotoTranslationGlossary.isPawCollectionSheet(titleOnly))
+        assertNull(PhotoTranslationGlossary.builtin(
+            "コクシンシート", "ja", "zh", brandOnly))
+        assertNull(PhotoTranslationGlossary.builtin(
+            "ギトパツ限定カラービール", "ja", "zh", titleOnly))
+        assertNull(PhotoTranslationGlossary.builtin(
+            "マーンルアイートラリク", "ja", "en",
+            brandOnly + listOf("コレクションシート")))
+    }
+
+    @Test fun giftPackSentencesMustPreserveNegativeMeaning() {
+        assertEquals("禮盒限定",
+            PhotoTranslationGlossary.builtin(
+                "ギフトバツクでしか", "ja", "zh", collectionSheet))
+        assertEquals("無法單獨取得",
+            PhotoTranslationGlossary.builtin(
+                "手に入らない", "ja", "zh", collectionSheet))
+        assertEquals("たしょうこと",
+            PhotoTranslationGlossary.builtin(
+                "たしょうこと", "ja", "zh", collectionSheet))
+        assertNull(PhotoTranslationGlossary.builtin(
+            "手に入らない", "ja", "zh"))
+    }
 }
