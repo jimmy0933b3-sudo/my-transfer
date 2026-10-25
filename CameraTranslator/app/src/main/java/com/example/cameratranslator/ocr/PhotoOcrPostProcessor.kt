@@ -90,12 +90,21 @@ internal object PhotoOcrPostProcessor {
 
         val gap = b.top - a.bottom
         val lineHeight = min(a.lineHeight, b.lineHeight).coerceAtLeast(1f)
-        if (gap < -lineHeight * 0.40f || gap > max(7f, lineHeight * 1.1f)) return false
+        if (a.language == "ja") {
+            // Ruby (furigana), diagonal headlines and two printed rows may
+            // physically overlap. Combining those rectangles erases their
+            // independent text during rendering. Only join clearly separated
+            // consecutive baselines with similar printed font size.
+            if (gap < 0f || gap > max(6f, lineHeight * .55f)) return false
+            if (max(a.lineHeight, b.lineHeight) / lineHeight > 1.24f) return false
+        } else if (gap < -lineHeight * 0.40f ||
+            gap > max(7f, lineHeight * 1.1f)) return false
 
         val horizontalOverlap = max(0, min(a.right, b.right) - max(a.left, b.left))
         val minWidth = min(a.width, b.width).coerceAtLeast(1)
         val centersAligned = abs(a.centerX - b.centerX) <= max(a.width, b.width) * 0.28f
-        if (horizontalOverlap < minWidth * 0.40f || !centersAligned) return false
+        if (horizontalOverlap < minWidth * (if (a.language == "ja") .58f else .40f) ||
+            !centersAligned) return false
 
         // Blocks with wildly different text scale are usually different
         // labels (e.g. product name above a tiny legal disclaimer).
