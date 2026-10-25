@@ -520,8 +520,16 @@ class MainViewModel @Inject constructor(
         var alternateReadings = 0
         var reviewNeeded = 0
         var secondaryPhotoContext = emptyList<String>()
-        val verifiedRaw = if (requestedSource == "ja" &&
-            !localPaddle.isNullOrEmpty()) {
+        // Auto Japanese photos should benefit from the same independent ML Kit
+        // evidence as manual Japanese mode, without re-running ML Kit for
+        // predominantly English/Chinese images.
+        val japaneseCrosscheck = !localPaddle.isNullOrEmpty() &&
+            PhotoJapaneseCrosscheckPolicy.shouldCrosscheck(
+                requestedSource, raw.map { it.sourceLanguage })
+        DiagnosticLog.record("OCR_CONTEXT", "日文雙引擎=" + japaneseCrosscheck +
+            "；設定語言=" + requestedSource +
+            "；日文原始段數=" + raw.count { it.sourceLanguage == "ja" })
+        val verifiedRaw = if (japaneseCrosscheck) {
             val checkStart = SystemClock.elapsedRealtime()
             val alternate = try {
                 photoOcr.recognizeTextFromBitmap(bitmap, "ja")
@@ -556,7 +564,7 @@ class MainViewModel @Inject constructor(
             }
             val checked = raw.mapIndexed { index, block ->
                 val box = block.boundingBox
-                val decision = if (box == null) null else {
+                val decision = if (box == null || block.sourceLanguage != "ja") null else {
                     PhotoJapaneseOcrConsensus.evaluate(
                         PhotoJapaneseOcrConsensus.Block(
                             block.originalText, box.left, box.top, box.right,
@@ -623,6 +631,7 @@ class MainViewModel @Inject constructor(
                 changed
             }
             val lowAgreementCount = raw.indices.count { idx ->
+                if (raw[idx].sourceLanguage != "ja") return@count false
                 val box = raw[idx].boundingBox ?: return@count false
                 val d = PhotoJapaneseOcrConsensus.evaluate(
                     PhotoJapaneseOcrConsensus.Block(raw[idx].originalText,
@@ -651,8 +660,7 @@ class MainViewModel @Inject constructor(
         // Azure to guess their meaning from isolated fragments. The existing
         // postprocessor prevents merging different columns and label sizes.
         val deduped = PhotoOcrOverlapDeduper.deduplicate(verifiedRaw)
-        val contextual = if (requestedSource == "ja" &&
-            !localPaddle.isNullOrEmpty()) {
+        val contextual = if (japaneseCrosscheck) {
             PhotoJapaneseParagraphs.combine(deduped)
         } else deduped
         DiagnosticLog.record("OCR_CONTEXT", "原始辨識=" +
