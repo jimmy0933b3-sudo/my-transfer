@@ -10,7 +10,8 @@ import java.util.Locale
 
 /**
  * App-scoped diagnostic events, not unrestricted system logcat.
- * OCR/translation text logging is enabled by default and may be disabled in Settings.\n * Raw photo text stays in private storage and is never written to Logcat.
+ * OCR/translation text logging requires explicit opt-in in Settings.
+ * Raw photo text stays in private storage and is never written to Logcat.
  * Stored in private no-backup storage, with automatic size bounds.
  */
 object DiagnosticLog {
@@ -18,7 +19,7 @@ object DiagnosticLog {
     private const val MAX_BYTES = 5_000_000
     private const val TRIM_BYTES = 4_000_000
     private var target: File? = null
-    @Volatile private var includePhotoText = true
+    @Volatile private var includePhotoText = false
 
     fun photoTextEnabled(): Boolean = includePhotoText
 
@@ -82,11 +83,24 @@ object DiagnosticLog {
 
     fun initialize(context: Context) {
         synchronized(lock) {
-            includePhotoText = context.getSharedPreferences(
-                "translator_settings", Context.MODE_PRIVATE
-            ).getBoolean("photo_diagnostic_text", true)
+            val settings = context.getSharedPreferences(
+                "translator_settings", Context.MODE_PRIVATE)
+            val hasSavedChoice = settings.contains("photo_diagnostic_text")
+            includePhotoText = PhotoDiagnosticConsentPolicy.allowPhotoText(
+                hasSavedChoice, settings.getBoolean("photo_diagnostic_text", false))
             if (target == null) {
                 target = File(context.noBackupFilesDir, "camera-translator-diagnostics.log")
+            }
+            // Old versions logged actual photographed text by default. When
+            // the user never made an explicit choice, erase pre-consent logs
+            // once, instead of retaining sensitive text after the upgrade.
+            if (PhotoDiagnosticConsentPolicy.purgePreConsentHistory(hasSavedChoice)) {
+                val cleared = runCatching {
+                    target?.takeIf { it.exists() }?.writeText("", Charsets.UTF_8)
+                }.isSuccess
+                if (cleared) {
+                    settings.edit().putBoolean("photo_diagnostic_text", false).apply()
+                }
             }
         }
         val version = runCatching {
