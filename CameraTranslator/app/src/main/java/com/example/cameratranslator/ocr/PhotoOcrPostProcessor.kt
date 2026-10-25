@@ -97,6 +97,9 @@ internal object PhotoOcrPostProcessor {
         else text
 
     private fun canMerge(a: Segment, b: Segment): Boolean {
+        // Thai Tesseract outputs physical text lines. Stacked poster headings
+        // are independent labels, not sentences to erase as one giant box.
+        if (a.language == "th") return false
         if (a.language != b.language || a.width <= 0 || b.width <= 0 ||
             a.height <= 0 || b.height <= 0) return false
         val previous = a.text.trimEnd()
