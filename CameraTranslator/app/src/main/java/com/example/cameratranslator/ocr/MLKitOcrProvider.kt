@@ -24,6 +24,7 @@ import kotlin.math.min
  */
 class MLKitOcrProvider(context: Context) : OcrProvider {
     private val thai = ThaiPhotoOcrProvider(context.applicationContext)
+    private val thaiPaddle = PaddleMobileOcrProvider(context.applicationContext)
     private val latin = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private val japanese = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
     private val chinese = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
@@ -64,6 +65,54 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
                     box.right, box.bottom, 1f)
             }
             val thaiLines = thai.recognize(bitmap, dateHints)
+            // Dedicated official Thai PP-OCRv5 recognizer, if downloaded,
+            // provides independent glyph evidence. v5/v6 Chinese/Japanese
+            // recognizers cannot be reused for Thai.
+            val paddleLines = if (thaiPaddle.store.ready(
+                    PaddleMobileModelStore.Version.THAI)) {
+                try {
+                    thaiPaddle.recognize(
+                        bitmap, "th", PaddleMobileModelStore.Version.THAI
+                    ).mapNotNull { item ->
+                        val box = item.boundingBox ?: return@mapNotNull null
+                        if (item.sourceLanguage != "th") return@mapNotNull null
+                        ThaiPhotoLinePolicy.Line(item.originalText,
+                            box.left, box.top, box.right, box.bottom,
+                            item.ocrConfidence ?: 0f)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    com.example.cameratranslator.core.DiagnosticLog.record(
+                        "THAI_CROSSCHECK", "泰文 Paddle 推論失敗，保留 Tesseract", e
+                    )
+                    emptyList()
+                }
+            } else {
+                com.example.cameratranslator.core.DiagnosticLog.record(
+                    "THAI_CROSSCHECK", "泰文 Paddle 模型尚未下載，使用 Tesseract"
+                )
+                emptyList()
+            }
+            val compared = if (paddleLines.isEmpty()) thaiLines else {
+                ThaiPhotoLinePolicy.combineIndependent(
+                    thaiLines.mapNotNull { item ->
+                        val box = item.boundingBox ?: return@mapNotNull null
+                        ThaiPhotoLinePolicy.Line(item.originalText,
+                            box.left, box.top, box.right, box.bottom,
+                            item.ocrConfidence ?: 0f)
+                    }, paddleLines
+                ).mapIndexed { index, line ->
+                    TextElement(
+                        id = "th:validated:" + index + ":" + line.text.hashCode(),
+                        originalText = line.text,
+                        boundingBox = Rect(line.left, line.top, line.right, line.bottom),
+                        sourceLanguage = "th",
+                        imageWidth = bitmap.width, imageHeight = bitmap.height,
+                        ocrConfidence = line.confidence
+                    )
+                }
+            }
             // Tesseract trained only on Thai can hallucinate Thai glyphs over
             // browser URL bars in screenshots. Independently detect definite
             // Latin URLs and veto ONLY OCR rectangles sharing that URL area.
@@ -79,7 +128,7 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
                         box.right, box.bottom, 1f
                     )
                 }
-            val safeLines = thaiLines.filterNot { item ->
+            val safeLines = compared.filterNot { item ->
                 val rect = item.boundingBox ?: return@filterNot false
                 val candidate = ThaiPhotoLinePolicy.Line(
                     item.originalText, rect.left, rect.top,
@@ -89,7 +138,7 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
             }
             com.example.cameratranslator.core.DiagnosticLog.record(
                 "THAI_OCR", "拉丁網址證據=" + urls.size +
-                    "；網址區域誤辨排除=" + (thaiLines.size - safeLines.size)
+                    "；網址區域誤辨排除=" + (compared.size - safeLines.size)
             )
             com.example.cameratranslator.core.DiagnosticLog.record(
                 "THAI_OCR", "網址安全過濾後=" + safeLines.size +
