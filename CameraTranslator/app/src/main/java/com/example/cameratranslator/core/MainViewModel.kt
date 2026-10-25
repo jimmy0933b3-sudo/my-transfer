@@ -438,7 +438,7 @@ class MainViewModel @Inject constructor(
             else photoOcr.suggestUprightRotation(inputBitmap, requestedSource)
         DiagnosticLog.record("PERF", "方向辨識耗時=" +
             (SystemClock.elapsedRealtime() - orientationStart) + "ms" +
-            "；方式=" + if (alreadyUpright) "同張照片已校正" else "重新偵測")
+            "；方式=" + (if (alreadyUpright) "同張照片已校正" else "重新偵測"))
         ensureCurrentPhoto(requestId)
         val bitmap = PhotoBitmapRotation.rotate(inputBitmap, rotation)
         DiagnosticLog.record("PHOTO", "方向校正=" + rotation + "°")
