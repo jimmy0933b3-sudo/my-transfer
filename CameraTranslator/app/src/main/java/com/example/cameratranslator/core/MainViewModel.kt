@@ -921,7 +921,8 @@ class MainViewModel @Inject constructor(
             DiagnosticLog.photoResult(i, block.sourceLanguage, original,
                 resolved.translated, "TRANSLATION_CHECKED",
                 "來源=" + resolved.provider.substringBefore("：").take(32) +
-                    "；狀態=" + outcome)
+                    "；狀態=" + outcome,
+                rawCandidate = translated, offlineCandidate = offlineCandidate)
             if (resolved.cloudQualityFailed) cloudQualityFailedCount++
             if (resolved.offlineAttempted) offlineFallbackAttempted++
             if (resolved.recovered) offlineFallbackRecovered++
