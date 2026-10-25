@@ -74,7 +74,7 @@ internal object PhotoJapaneseOcrConsensus {
     fun evaluate(paddle: Block, mlkit: List<Block>): Decision {
         if (!scriptValid(paddle.text)) return Decision(Action.KEEP, reason = "not_japanese")
         val original = norm(paddle.text)
-        val candidate = mlkit.asSequence()
+        val candidates = mlkit.asSequence()
             .filter { scriptValid(it.text) }
             .map { it to intersectionOverUnion(paddle, it) }
             .filter { it.second >= 0.48f }
@@ -83,13 +83,33 @@ internal object PhotoJapaneseOcrConsensus {
                 len in (original.length * 0.65f).toInt().coerceAtLeast(2)..
                     (original.length * 1.45f).toInt().coerceAtLeast(2)
             }
-            .maxByOrNull { it.second }
+            .toList()
+        val mostOverlapping = candidates.maxByOrNull { it.second }
             ?: return Decision(Action.KEEP, reason = "no_aligned_match")
 
+        // A marginally lower-IoU block may be the actual text line, while
+        // the highest IoU is ruby or an adjacent annotation. Require BOTH
+        // strong geometric alignment and close reading before preferring it.
+        val corroborated = candidates
+            .filter { it.second >= .68f &&
+                it.second >= mostOverlapping.second - .08f }
+            .maxByOrNull { similarity(original, norm(it.first.text)) }
+            ?.takeIf { similarity(original, norm(it.first.text)) >= .84f }
+        val candidate = corroborated ?: mostOverlapping
         val alternate = candidate.first
         val iou = candidate.second
         val score = similarity(original, norm(alternate.text))
         val confidence = paddle.confidence ?: 1f
+        // Competing, equally positioned ML Kit lines are ambiguous. With
+        // weak Paddle and a non-identical candidate, do not rewrite pixels.
+        val conflicting = candidates.any {
+            it.first !== alternate && it.second >= iou - .08f &&
+                similarity(original, norm(it.first.text)) < .74f
+        }
+        if (confidence < .42f && score < 1f && conflicting) {
+            return Decision(Action.REVIEW, score, alternate,
+                "conflicting_alternates", iou)
+        }
         if (score >= .74f || original.length < 5) {
             // Accept corrections only when Paddle itself is genuinely
             // uncertain and the readings almost agree. Strong Paddle keeps
