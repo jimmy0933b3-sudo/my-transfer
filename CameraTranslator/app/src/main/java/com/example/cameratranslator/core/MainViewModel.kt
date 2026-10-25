@@ -428,10 +428,11 @@ class MainViewModel @Inject constructor(
         val totalStart = SystemClock.elapsedRealtime()
         val requestedSource = sourceLanguage
         val requestedTarget = targetLanguage
+        val mode = forcedMode ?: photoOcrMode
         _snapshotStatus.value = "正在確認照片與文字方向…"
         DiagnosticLog.record("PHOTO", "開始處理；解析度=" +
             inputBitmap.width + "x" + inputBitmap.height +
-            "；來源語言=" + requestedSource + "；OCR 模式=" + photoOcrMode)
+            "；來源語言=" + requestedSource + "；OCR 模式=" + mode)
         val orientationStart = SystemClock.elapsedRealtime()
         val rotation = if (alreadyUpright) 0
             else photoOcr.suggestUprightRotation(inputBitmap, requestedSource)
@@ -444,7 +445,6 @@ class MainViewModel @Inject constructor(
         photoOcrDiagnostics = "辨識前校正：照片旋轉 " + rotation + "°"
         // Photo OCR is independent of translation selection. In offline mode
         // ONNX Runtime never contacts the Azure Worker or uploads the photo.
-        val mode = forcedMode ?: photoOcrMode
         val ocrStart = SystemClock.elapsedRealtime()
         val version = when (mode) {
             "mobile_v5" -> PaddleMobileModelStore.Version.V5
@@ -519,6 +519,7 @@ class MainViewModel @Inject constructor(
         var independentMatches = 0
         var alternateReadings = 0
         var reviewNeeded = 0
+        var secondaryPhotoContext = emptyList<String>()
         val verifiedRaw = if (requestedSource == "ja" &&
             !localPaddle.isNullOrEmpty()) {
             val checkStart = SystemClock.elapsedRealtime()
@@ -531,6 +532,13 @@ class MainViewModel @Inject constructor(
                     "第二套日文 OCR 發生異常，維持 Paddle 辨識", e)
                 emptyList()
             }
+            // Independent ML Kit results may corroborate *photo-level*
+            // context even if Paddle's title text is misspelled. Never
+            // overwrite Paddle coordinates based only on this evidence.
+            secondaryPhotoContext = alternate
+                .filter { it.sourceLanguage == "ja" }
+                .map { it.originalText.trim() }
+                .filter(String::isNotBlank)
             // Log every independent OCR candidate, not only candidates that
             // managed to align with Paddle. Otherwise missing/misaligned
             // readings cannot be diagnosed from the exported report.
@@ -695,7 +703,12 @@ class MainViewModel @Inject constructor(
         val translateStart = SystemClock.elapsedRealtime()
         // Match ambiguous OCR errors only when the same photo contains the
         // independent collection-sheet and series labels.
-        val photoContext = selected.map { it.originalText.trim() }
+        val photoContext = selected.map { it.originalText.trim() } +
+            secondaryPhotoContext
+        val photoSceneRecognized = PhotoTranslationGlossary.isPawCollectionSheet(photoContext)
+        DiagnosticLog.record("OCR_CONTEXT", "完整照片語境：收藏單=" +
+            photoSceneRecognized + "；第二套 OCR 線索=" +
+            secondaryPhotoContext.size + "；本次OCR=" + mode)
         var photoGlossaryHits = 0
         // Azure translates up to 48 eligible OCR blocks in six-item batches.
         // This improves coverage beyond the old 18-block cap without allowing
@@ -710,7 +723,9 @@ class MainViewModel @Inject constructor(
             requestedSource != requestedTarget &&
                 block.sourceLanguage != requestedTarget &&
                 !block.ocrReviewNeeded &&
-                PhotoTranslationQuality.rejectOcr(original, block.sourceLanguage) == null &&
+                PhotoTranslationQuality.rejectOcr(
+                    original, block.sourceLanguage, block.ocrConfidence
+                ) == null &&
                 !PhotoBrandPolicy.shouldPreserve(original, block.sourceLanguage, requestedSource) &&
                 photoGlossary.lookup(
                     original, block.sourceLanguage, requestedTarget, photoContext
@@ -835,7 +850,7 @@ class MainViewModel @Inject constructor(
             val ocrProblem = if (block.ocrReviewNeeded) {
                 "兩套日文 OCR 辨識差異大，暫不覆蓋原文"
             } else PhotoTranslationQuality.rejectOcr(
-                original, block.sourceLanguage
+                original, block.sourceLanguage, block.ocrConfidence
             )
             if (ocrProblem != null) {
                 rejectedCount++
