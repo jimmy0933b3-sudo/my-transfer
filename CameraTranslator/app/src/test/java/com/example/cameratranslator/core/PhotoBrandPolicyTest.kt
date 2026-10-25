@@ -26,6 +26,16 @@ class PhotoBrandPolicyTest {
         assertFalse(PhotoBrandPolicy.shouldPreserve("World!", "auto"))
     }
 
+    @Test fun preserveStandalonePawPatrolPackagingMarks() {
+        assertTrue(PhotoBrandPolicy.shouldPreserve("PAW", "en", "ja"))
+        assertTrue(PhotoBrandPolicy.shouldPreserve("PATROL", "en", "ja"))
+        assertTrue(PhotoBrandPolicy.shouldPreserve("TOMY", "en", "ja"))
+        assertTrue(PhotoBrandPolicy.shouldPreserve("TM", "en", "ja"))
+        assertTrue(PhotoBrandPolicy.shouldPreserve("ver.", "en", "ja"))
+        assertFalse(PhotoBrandPolicy.shouldPreserve("HELLO WORLD", "en", "en"))
+        assertFalse(PhotoBrandPolicy.shouldPreserve("Collect all 10 vehicles!", "en", "ja"))
+    }
+
     @Test fun anEnglishToChineseRequestNeverPreservesBrandInsteadOfTranslating() {
         assertFalse(PhotoBrandPolicy.shouldPreserve("TAKARA TOMY", "en"))
     }
