@@ -16,8 +16,8 @@ android {
         applicationId = "com.example.cameratranslator"
         minSdk = 26
         targetSdk = 34
-        versionCode = 44
-        versionName = "1.6.27"
+        versionCode = 45
+        versionName = "1.6.28"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
