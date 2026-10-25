@@ -67,7 +67,7 @@ internal object PhotoTranslationGlossary {
             // often becomes a facial covering instead of a skincare mask.
             // Use printed neighboring text as independent contextual evidence.
             val hasOvernight = photoContext.any { row ->
-                Regex("""(?i)\\bovernight\\b""").containsMatchIn(row)
+                Regex("""(?i)\bovernight\b""").containsMatchIn(row)
             }
             if (key == "mask" && hasOvernight) return "面膜"
         }
