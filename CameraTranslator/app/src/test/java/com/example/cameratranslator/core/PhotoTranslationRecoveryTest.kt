@@ -99,6 +99,51 @@ class PhotoTranslationRecoveryTest {
     }
 
     @Test
+    fun cloudUntranslatedJapaneseEchoRetriesOfflineWithoutRepainting() = runBlocking {
+        var offlineCalls = 0
+        val result = PhotoTranslationRecovery.resolve(
+            original = "手に入らない", source = "ja", target = "zh",
+            translation = "手に入らない", provider = "Azure 雲端",
+            offlineReady = true
+        ) {
+            offlineCalls++
+            "無法入手"
+        }
+        assertEquals(1, offlineCalls)
+        assertTrue(result.cloudQualityFailed)
+        assertTrue(result.recovered)
+        assertEquals("無法入手", result.translated)
+    }
+
+    @Test
+    fun offlineUntranslatedEchoIsNotCountedAsAnAcceptedTranslation() = runBlocking {
+        val result = PhotoTranslationRecovery.resolve(
+            original = "手に入らない", source = "ja", target = "zh",
+            translation = "手に入らない", provider = "ML Kit 離線",
+            offlineReady = false
+        ) { fail("Offline must not be retried automatically"); null }
+        assertNull(result.translated)
+        assertFalse(result.offlineAttempted)
+        assertNotNull(result.rejectionReason)
+    }
+
+    @Test
+    fun chineseKanjiAndIntentionalBrandPreservationDoNotBecomeFailures() = runBlocking {
+        val kanji = PhotoTranslationRecovery.resolve(
+            original = "東京", source = "ja", target = "zh",
+            translation = "東京", provider = "Azure 雲端",
+            offlineReady = false
+        ) { null }
+        assertEquals("東京", kanji.translated)
+        val brand = PhotoTranslationRecovery.resolve(
+            original = "TOMY", source = "en", target = "zh",
+            translation = "TOMY", provider = "品牌名稱保留原文",
+            offlineReady = false
+        ) { null }
+        assertEquals("TOMY", brand.translated)
+    }
+
+    @Test
     fun absentPrimaryTranslationStaysAbsentWithoutNewCloudRequests() = runBlocking {
         val result = PhotoTranslationRecovery.resolve(
             original = longThai, source = "th", target = "zh",

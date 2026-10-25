@@ -1,5 +1,6 @@
 package com.example.cameratranslator.core
 
+import java.text.Normalizer
 import java.util.Locale
 
 /**
@@ -15,6 +16,20 @@ internal object PhotoTranslationQuality {
     private val kana = Regex("[\u3040-\u30ff]")
     private val han = Regex("[\u3400-\u9fff]")
     private val thai = Regex("[\u0e00-\u0e7f]")
+    private val numericToken = Regex("\\d+(?:[.,]\\d+)*")
+    private val thousandsSeparator = Regex(",(?=\\d{3}(?:\\D|$))")
+    // Surface-form checks are not proof that a translation is semantically correct.
+    private val japaneseNegativeEnding =
+        Regex("(?:ない|なかった|ません(?:でした)?|ず)(?=$|[\\s、。！？!?])")
+    private val chineseNegativeOrRestrictive = Regex("[不無无沒没未非勿別免禁難只僅唯限缺拒失]")
+
+    private fun numbers(text: String): List<String> {
+        val normalized = Normalizer.normalize(text, Normalizer.Form.NFKC)
+        return numericToken.findAll(normalized)
+            .map { it.value.replace(thousandsSeparator, "") }
+            .sorted().toList()
+    }
+
 
     fun rejectOcr(
         original: String, source: String, confidence: Float? = null
@@ -74,6 +89,22 @@ internal object PhotoTranslationQuality {
         }
         if (output.length > input.length * 3 + 24 && input.length >= 5) {
             return "譯文異常過長"
+        }
+        // Compare Arabic numerals only when both sides still use numerals.
+        // Chinese number words may be legitimate, so avoid speculative rejection.
+        if (source != target) {
+            val before = numbers(input)
+            val after = numbers(output)
+            if (before.isNotEmpty() && after.isNotEmpty() && before != after) {
+                return "原文與譯文的數字不一致"
+            }
+        }
+        // Catch explicit Japanese negatives that seem to turn into Chinese
+        // affirmatives. "只能／限定" preserves ～しか～ない restrictions.
+        if (source == "ja" && target == "zh" &&
+            japaneseNegativeEnding.containsMatchIn(input) &&
+            !chineseNegativeOrRestrictive.containsMatchIn(output)) {
+            return "日文否定語意可能在翻譯中消失"
         }
         if (target == "zh" && source in setOf("ja", "zh", "th")) {
             // Never paint newly invented words such as 'Huichekko', 'Zuch'
