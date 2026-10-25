@@ -39,4 +39,11 @@ class PhotoBrandPolicyTest {
     @Test fun anEnglishToChineseRequestNeverPreservesBrandInsteadOfTranslating() {
         assertFalse(PhotoBrandPolicy.shouldPreserve("TAKARA TOMY", "en"))
     }
+    @Test fun titleCaseEnglishProductDescriptionsAreNotPreservedAsLogos() {
+        assertFalse(PhotoBrandPolicy.shouldPreserve(
+            "Secret Gold Overnight", "en", "th"))
+        assertFalse(PhotoBrandPolicy.shouldPreserve("Mask", "en", "th"))
+        assertTrue(PhotoBrandPolicy.shouldPreserve(
+            "Takara Tomy", "en", "th"))
+    }
 }
