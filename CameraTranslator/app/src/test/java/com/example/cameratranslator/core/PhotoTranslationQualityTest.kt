@@ -81,6 +81,24 @@ class PhotoTranslationQualityTest {
             "全部で10種類", "總共有十種", "ja", "zh"))
     }
 
+    @Test fun ocrLatinDebrisMustNotBeMisreadAsARealQuantity() {
+        // PP-OCRv5 has produced Latin-looking Japanese number fragments on
+        // the collection sheet. The photographed text says ten varieties.
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            "全部Gi0種類！", "共有 10 種！", "ja", "zh"))
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            "全部C10種類！", "共有 10 種！", "ja", "zh"))
+        // Preserve the original protection when a numeral is clearly legible.
+        assertNotNull(PhotoTranslationQuality.rejectTranslation(
+            "全部で20種類！", "共有 10 種！", "ja", "zh"))
+        assertNotNull(PhotoTranslationQuality.rejectTranslation(
+            "合計 10 個", "總共有 11 個", "ja", "zh"))
+        assertNotNull(PhotoTranslationQuality.rejectTranslation(
+            "ver.1.6.27", "版本 1.6.28", "en", "zh"))
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            "全部Gi10種類！", "共有 10 種！", "ja", "zh"))
+    }
+
     @Test fun lowConfidenceShortOcrNoiseIsNotPaintedOrSentToAzure() {
         assertNotNull(PhotoTranslationQuality.rejectOcr("Dh", "en", 0.40f))
         assertNotNull(PhotoTranslationQuality.rejectOcr("Hんてi", "ja", 0.32f))
