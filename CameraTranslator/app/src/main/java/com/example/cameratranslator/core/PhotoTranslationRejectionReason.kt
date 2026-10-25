@@ -25,6 +25,8 @@ internal object PhotoTranslationRejectionReason {
             reason.startsWith("譯文異常過長") -> "translation_too_long"
             reason.startsWith("譯文含原文沒有的英文片段") -> "translation_unexpected_latin"
             reason.startsWith("譯文缺少中文內容") -> "translation_not_chinese"
+            reason.startsWith("原文與譯文的數字不一致") -> "translation_numeric_mismatch"
+            reason.startsWith("日文否定語意可能在翻譯中消失") -> "translation_negation_risk"
             else -> "translation_other"
         }
         else -> "other"
