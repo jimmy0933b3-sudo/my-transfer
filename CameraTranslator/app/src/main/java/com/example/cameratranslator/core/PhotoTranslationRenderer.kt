@@ -38,7 +38,11 @@ internal object PhotoTranslationRenderer {
         val paint: Paint
     )
 
-    fun compose(original: Bitmap, lines: List<Pair<TextElement, String>>): Result {
+    fun compose(
+        original: Bitmap, lines: List<Pair<TextElement, String>>,
+        blockIndices: List<Int> = lines.indices.toList()
+    ): Result {
+        require(blockIndices.size == lines.size) { "Render block index mismatch" }
         val output = original.copy(Bitmap.Config.ARGB_8888, true)
             ?: error("Cannot allocate translated photo")
         val canvas = Canvas(output)
@@ -49,8 +53,10 @@ internal object PhotoTranslationRenderer {
             skipped++
             skipReasons[reason] = (skipReasons[reason] ?: 0) + 1
             DiagnosticLog.record("PHOTO_RENDER",
-                "編號=" + index + "；結果=跳過；原因=" + reason +
+                "編號=" + blockIndices[index] + "；結果=跳過；原因=" + reason +
                     "；框=" + (element.boundingBox?.toShortString() ?: "無"))
+            DiagnosticLog.photoResult(blockIndices[index], element.sourceLanguage,
+                element.originalText, null, "RENDER_SKIPPED", "原因=" + reason)
         }
 
         // Plan ALL possible changed translations together before painting.
@@ -76,7 +82,9 @@ internal object PhotoTranslationRenderer {
             if (translated.trim() == element.originalText.trim()) {
                 unchanged++
                 DiagnosticLog.record("PHOTO_RENDER",
-                    "編號=" + index + "；結果=同原文不須替換")
+                    "編號=" + blockIndices[index] + "；結果=同原文不須替換")
+                DiagnosticLog.photoResult(blockIndices[index], element.sourceLanguage,
+                    element.originalText, translated, "RENDER_UNCHANGED", "與原文相同")
                 continue
             }
             val bounds = element.boundingBox
@@ -159,10 +167,16 @@ internal object PhotoTranslationRenderer {
             }
             canvas.restore()
             DiagnosticLog.record("PHOTO_RENDER",
-                "編號=" + item.index + "；結果=成功；框=" +
+                "編號=" + blockIndices[item.index] + "；結果=成功；框=" +
                     item.fullRect.toShortString() +
                     "；排版框=" + rect.toShortString() +
                     "；重疊分區=" + (item.fullRect != rect) +
+                    "；行數=" + item.translatedLines.size +
+                    "；字級=" + item.fontSize.toInt())
+            DiagnosticLog.photoResult(blockIndices[item.index], item.element.sourceLanguage,
+                item.element.originalText, lines[item.index].second,
+                "RENDER_PAINTED", "原文框=" + item.fullRect.toShortString() +
+                    "；排版框=" + rect.toShortString() +
                     "；行數=" + item.translatedLines.size +
                     "；字級=" + item.fontSize.toInt())
         }
