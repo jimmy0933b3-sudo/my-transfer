@@ -34,6 +34,8 @@ class PhotoTranslationRejectionReasonTest {
             "日文否定語意可能在翻譯中消失", "translation"))
         assertEquals("translation_numeric_mismatch", PhotoTranslationRejectionReason.code(
             "原文與譯文的數字不一致", "translation"))
+        assertEquals("translation_untranslated_echo", PhotoTranslationRejectionReason.code(
+            "譯文與原文相同，疑似未翻譯", "translation"))
     }
 
     @Test
