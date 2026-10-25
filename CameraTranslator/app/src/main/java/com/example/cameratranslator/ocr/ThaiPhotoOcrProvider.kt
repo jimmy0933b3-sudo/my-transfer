@@ -148,7 +148,7 @@ class ThaiPhotoOcrProvider(private val context: Context) {
         return ThaiModelIntegrity.verified(model)
     }
 
-    suspend fun recognize(
+    internal suspend fun recognize(
         bitmap: Bitmap, latinDateHints: List<ThaiPhotoLinePolicy.Line> = emptyList()
     ): List<TextElement> = withContext(Dispatchers.IO) {
         ensureModel()
