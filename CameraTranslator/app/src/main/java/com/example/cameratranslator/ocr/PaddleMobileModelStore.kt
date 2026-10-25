@@ -16,7 +16,8 @@ import java.net.URL
 class PaddleMobileModelStore(context: Context) {
     enum class Version(val label: String, val detRepo: String, val recRepo: String) {
         V5("PP-OCRv5 Mobile", "PP-OCRv5_mobile_det_onnx", "PP-OCRv5_mobile_rec_onnx"),
-        V6("PP-OCRv6 Small", "PP-OCRv6_small_det_onnx", "PP-OCRv6_small_rec_onnx");
+        V6("PP-OCRv6 Small", "PP-OCRv6_small_det_onnx", "PP-OCRv6_small_rec_onnx"),
+        THAI("PP-OCRv5 Thai", "PP-OCRv5_mobile_det_onnx", "th_PP-OCRv5_mobile_rec_onnx");
         companion object {
             fun fromId(value: String): Version? = values().firstOrNull {
                 it.name.equals(value, ignoreCase = true)
@@ -39,14 +40,31 @@ class PaddleMobileModelStore(context: Context) {
     fun ready(version: Version): Boolean {
         val f = files(version)
         return f.det.length() > 1_000_000 &&
-            f.rec.length() > 1_000_000 && f.vocab.length() > 10_000 &&
+            f.rec.length() > 1_000_000 &&
+            f.vocab.length() > (if (version == Version.THAI) 2_000 else 10_000) &&
             // A large HTML/error payload must not be mistaken for a model.
             runCatching {
                 f.vocab.bufferedReader().use { reader ->
                     reader.lineSequence().any { it.trim() == "character_dict:" }
                 }
-            }.getOrDefault(false)
+            }.getOrDefault(false) &&
+            (version != Version.THAI || verifyThaiRecognizer(f.rec))
     }
+
+    /** Official PaddlePaddle ONNX SHA-256, never trust an unverified Thai model. */
+    private fun verifyThaiRecognizer(file: File): Boolean = runCatching {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val bytes = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(bytes)
+                if (count < 0) break
+                digest.update(bytes, 0, count)
+            }
+        }
+        digest.digest().joinToString("") { "%02x".format(it) } ==
+            "27618be66018f8598ac0a526a593f9f1cebf794e7eded93428e8fb016e537f5f"
+    }.getOrDefault(false)
 
     suspend fun download(
         version: Version, report: (String) -> Unit, force: Boolean = false
@@ -61,16 +79,20 @@ class PaddleMobileModelStore(context: Context) {
             try {
                 for ((index, item) in parts.withIndex()) {
                     val (dest, repository, name) = item
-                    val minimum = if (name.endsWith(".yml")) 10_000L else 1_000_000L
+                    val minimum = if (name.endsWith(".yml"))
+                        (if (version == Version.THAI) 2_000L else 10_000L)
+                    else 1_000_000L
                     if (force) {
                         dest.delete()
                         File(dest.parentFile, dest.name + ".part").delete()
                     }
-                    if (!force && dest.length() >= minimum) continue
+                    if (!force && dest.length() >= minimum &&
+                        !(version == Version.THAI && name == "inference.onnx" &&
+                            dest == f.rec && !verifyThaiRecognizer(dest))) continue
                     val url = "https://huggingface.co/PaddlePaddle/" + repository +
                         "/resolve/main/" + name + "?download=true"
                     report(version.label + " 第 " + (index + 1) + "/3 項下載中…")
-                    downloadFile(url, dest) { bytes, total ->
+                    downloadFile(url, dest, minimum) { bytes, total ->
                         val message = if (total > 0) {
                             (bytes * 100L / total).coerceIn(0L, 100L).toString() + "%"
                         } else (bytes / 1024).toString() + " KB"
@@ -85,7 +107,10 @@ class PaddleMobileModelStore(context: Context) {
             }
         }
 
-    private fun downloadFile(url: String, destination: File, progress: (Long, Long) -> Unit) {
+    private fun downloadFile(
+        url: String, destination: File, minimum: Long,
+        progress: (Long, Long) -> Unit
+    ) {
         destination.parentFile?.mkdirs()
         val part = File(destination.parentFile, destination.name + ".part")
         val start = part.takeIf { it.exists() }?.length() ?: 0L
@@ -118,7 +143,6 @@ class PaddleMobileModelStore(context: Context) {
                 }
             }
             if (total > 0 && downloaded != total) error("模型未下載完整，可重新下載")
-            val minimum = if (destination.extension == "yml") 10_000L else 1_000_000L
             if (part.length() < minimum) error("下載回應不像有效的模型")
             if (destination.exists() && !destination.delete()) error("無法替換舊模型")
             if (!part.renameTo(destination)) error("儲存模型失敗")

@@ -459,7 +459,9 @@ class MainViewModel @Inject constructor(
             version != null && !mobileStore.ready(version) ->
                 version.label + " 模型未安裝或不完整，請到設定下載／重新下載"
             version != null && requestedSource == "th" ->
-                "Paddle Mobile 未支援泰文，使用泰文專用辨識"
+                if (mobileStore.ready(PaddleMobileModelStore.Version.THAI))
+                    "泰文雙引擎：Tesseract + PP-OCRv5 Thai"
+                else "泰文使用 Tesseract；可在設定下載 PP-OCRv5 Thai 雙引擎"
             mobileReady -> version!!.label + " 模型已安裝，開始手機端辨識"
             else -> "目前使用 ML Kit"
         }
@@ -507,7 +509,12 @@ class MainViewModel @Inject constructor(
                     !mobileStore.ready(version)) version.label +
                     " 尚未下載，暫用內建 OCR。請到設定下載模型。"
                 else "使用本機 OCR 辨識照片…"
-                photoOcr.recognizeTextFromBitmap(bitmap, requestedSource)
+                photoOcr.recognizeTextFromBitmap(bitmap, requestedSource).also {
+                    if (requestedSource == "th" && photoOcr.lastThaiPaddleUsed) {
+                        actualPhotoOcrEngine =
+                            "Tesseract + PP-OCRv5 Thai（雙引擎手機離線）"
+                    }
+                }
             }
         }
         if (thaiOcrModels.isModelInstalled()) {

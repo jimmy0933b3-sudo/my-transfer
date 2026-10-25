@@ -31,7 +31,25 @@ internal object PhotoTranslationGlossary {
         photoContext: List<String> = emptyList()
     ): String? {
         val key = original.trim().lowercase(Locale.ROOT)
-        if (target != "zh" || source !in setOf("en", "ja", "auto")) return null
+        if (target != "zh" || source !in setOf("en", "ja", "th", "auto")) return null
+        if (source == "th") {
+            // Only well-attested complete Thai terms. Never patch a random
+            // substring in a sentence or infer missing dates from OCR noise.
+            val clean = original.trim().trimEnd('.', '。', '!', '！').trim()
+            return when {
+                clean == "ประเทศไทย" -> "泰國"
+                clean == "ความสุข" -> "幸福"
+                clean == "เทศกาลสงกรานต์" -> "潑水節"
+                // A frequent OCR variation of the canonical Thai festival.
+                // Require the intact long prefix so unrelated words cannot
+                // be silently treated as Songkran.
+                clean.startsWith("เทศกาลสงกร") &&
+                    clean.length in 14..19 &&
+                    clean.count { it in '\u0e01'..'\u0e5b' } == clean.length ->
+                    "潑水節"
+                else -> null
+            }
+        }
         // Both signals are required. A generic Japanese sentence mentioning
         // a vehicle or a standalone "ピークル" must not be reinterpreted.
         val pawCollectionSheet = isPawCollectionSheet(photoContext)

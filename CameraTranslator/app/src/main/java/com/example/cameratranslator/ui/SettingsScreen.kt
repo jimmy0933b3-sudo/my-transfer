@@ -353,7 +353,8 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                 }
                 listOf(
                     "V5" to "PP-OCRv5 Mobile",
-                    "V6" to "PP-OCRv6 Small"
+                    "V6" to "PP-OCRv6 Small",
+                    "THAI" to "PP-OCRv5 泰文增強模型（可選）"
                 ).forEach { (id, title) ->
                     HorizontalDivider(color = BorderColor)
                     val installed = viewModel.installedMobileOcr(id)
@@ -380,7 +381,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                 }
                 Text("版本切換後，新拍的照片才會使用所選模型。若尚未下載或推論失敗，" +
                     "會明確顯示 ML Kit 備援。v6 Small 支援日文，v6 Tiny 不支援日文。" +
-                    "泰文維持專用 Tesseract OCR。首次下載需網路，ONNX 模型從官方 PaddlePaddle 來源取得。",
+                    "泰文先用 Tesseract；若安裝泰文專用 PP-OCRv5，則以雙引擎交叉驗證。首次下載需網路，ONNX 模型從官方 PaddlePaddle 來源取得。",
                     color = Muted, fontSize = 11.sp, lineHeight = 18.sp)
                 StatusPill(
                     "上次拍照辨識：" + viewModel.actualPhotoOcrEngine,
@@ -392,7 +393,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
 
             Panel {
                 Heading("04  /  THAI OCR", "泰文拍照辨識",
-                    "英文、中文和日文辨識已內建；泰文需要額外下載約 1 MB 模型。")
+                    "泰文 Tesseract 約 1 MB；可在上方另下載約 8 MB 的 PP-OCRv5 泰文模型進行交叉驗證。")
                 val thaiStatus = viewModel.thaiOcrModelStatus
                 val isReady = thaiStatus.startsWith("已下載")
                 val downloading = thaiStatus.startsWith("下載中")
