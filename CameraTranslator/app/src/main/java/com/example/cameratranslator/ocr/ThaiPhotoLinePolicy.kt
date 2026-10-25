@@ -111,12 +111,25 @@ internal object ThaiPhotoLinePolicy {
         for (candidate in paddle.filter { plausible(it.text) && it.confidence >= .55f }) {
             val match = result.indexOfFirst {
                 overlap(it, candidate) >= .60f &&
-                    (sameVisualLine(it, candidate) || closeText(it.text, candidate.text))
+                    (sameVisualLine(it, candidate) || closeText(it.text, candidate.text) ||
+                        samePrintedLine(it, candidate))
             }
             if (match >= 0) {
-                // Independently trained Paddle can correct plausible but wrong
-                // Tesseract glyphs. Never replace good text with bad glyphs.
-                if (quality(candidate) >= quality(result[match]) - .06f) {
+                // Paddle may decode a single printed Thai line much better
+                // than Tesseract even when their strings do not resemble
+                // each other. The physical footprint provides an independent
+                // crosscheck, but require a material confidence improvement
+                // before overriding an otherwise different string.
+                val old = result[match]
+                val footprintOnly = samePrintedLine(old, candidate) &&
+                    !sameVisualLine(old, candidate) &&
+                    !closeText(old.text, candidate.text)
+                val shouldReplace = if (footprintOnly) {
+                    candidate.confidence >= .80f &&
+                        candidate.confidence >= old.confidence + .045f &&
+                        quality(candidate) >= quality(old) + .035f
+                } else quality(candidate) >= quality(old) - .06f
+                if (shouldReplace) {
                     result[match] = candidate
                     replaced++
                 }
@@ -200,6 +213,37 @@ internal object ThaiPhotoLinePolicy {
      * Require near containment AND an identical baseline/left edge so two
      * genuinely separate adjacent lines are never collapsed by geometry.
      */
+    /**
+     * Independent engines can read exactly the same printed Thai word with
+     * completely different glyph strings. OCR boxes can also have different
+     * vertical padding: Tesseract's [337,859]-[497,876] is 17 px tall
+     * while Paddle's [332,848]-[500,885] is 37 px tall.
+     *
+     * Compare the actual centers, horizontal footprint and containment of
+     * the smaller rectangle rather than requiring matching top edges.
+     * This must NOT treat adjacent columns or neighboring baselines as one.
+     */
+    private fun samePrintedLine(a: Line, b: Line): Boolean {
+        val aWidth = a.width.coerceAtLeast(1)
+        val bWidth = b.width.coerceAtLeast(1)
+        val aHeight = a.height.coerceAtLeast(1)
+        val bHeight = b.height.coerceAtLeast(1)
+        val narrower = min(aWidth, bWidth)
+        val taller = max(aHeight, bHeight)
+        val shorter = min(aHeight, bHeight)
+        val firstLength = normalized(a.text).length
+        val secondLength = normalized(b.text).length
+        return overlap(a, b) >= .82f &&
+            narrower >= max(aWidth, bWidth) * .74f &&
+            shorter >= taller * .35f &&
+            kotlin.math.abs((a.left + a.right) - (b.left + b.right)) <=
+                narrower * .20f &&
+            kotlin.math.abs((a.top + a.bottom) - (b.top + b.bottom)) <=
+                taller * .44f &&
+            min(firstLength, secondLength) >= 5 &&
+            min(firstLength, secondLength) >= max(firstLength, secondLength) * .72f
+    }
+
     private fun sameVisualLine(a: Line, b: Line): Boolean {
         val minHeight = min(a.height, b.height).coerceAtLeast(1)
         val minWidth = min(a.width, b.width).coerceAtLeast(1)
