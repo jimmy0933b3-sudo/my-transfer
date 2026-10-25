@@ -71,4 +71,50 @@ class ThaiPhotoLinePolicyTest {
         assertFalse(ThaiPhotoLinePolicy.corroborated(
             same, listOf(same), listOf(other)))
     }
+    @Test fun differentReadingsOnSameThaiPosterLineAreNotTwoTranslations() {
+        // Real v1.6.31 diagnostic rectangles; AUTO/SPARSE disagreed on
+        // characters despite recognizing the same physical red headline.
+        val broad = line("ประเทศไทย.", 123, 557, 573, 103, .8371057f)
+        val compact = line("ประเทษไทย.", 123, 557, 466, 79, .900147f)
+        val happiness = line("ความสุข", 199, 747, 318, 73, .92057574f)
+        val result = ThaiPhotoLinePolicy.merge(listOf(broad, happiness), listOf(compact))
+        assertEquals(2, result.size)
+        assertEquals(compact, result[0])
+        assertEquals(happiness, result[1])
+    }
+
+    @Test fun geometricMatchingCannotEraseDifferentBaselinesOrSideBySideText() {
+        val first = line("เทศกาลสงกรานต์", 123, 557, 470, 80, .91f)
+        val second = line("ความสุขวันนี้", 125, 638, 460, 74, .93f)
+        val rightColumn = line("เมษายน", 505, 557, 175, 80, .92f)
+        val result = ThaiPhotoLinePolicy.merge(listOf(first, second), listOf(rightColumn))
+        assertEquals(3, result.size)
+    }
+
+    @Test fun recoverOnlyGapAndShortTailNotWholePoster() {
+        val lines = listOf(
+            line("ประเทศไทย", 123, 557, 466, 79, .90f),
+            line("ความสุข", 199, 747, 318, 73, .92f)
+        )
+        val regions = ThaiPhotoLinePolicy.recoveryRegions(lines, 720, 1544)
+        assertEquals(2, regions.size)
+        assertEquals(ThaiPhotoLinePolicy.RecoveryRegion(0, 640, 720, 743), regions[0])
+        assertEquals(ThaiPhotoLinePolicy.RecoveryRegion(0, 826, 720, 966), regions[1])
+        assertTrue(ThaiPhotoLinePolicy.recoveryRegions(emptyList(), 720, 1544).isEmpty())
+    }
+
+    @Test fun numericDateHintIsJoinedOnlyWithGenuineNearbyThaiMonth() {
+        val month = line("เมษายน", 370, 865, 135, 38, .91f)
+        val number = line("13–15", 265, 862, 96, 44, .92f)
+        val other = line("ประเทศไทย", 123, 557, 466, 79, .90f)
+        val combined = ThaiPhotoLinePolicy.attachLatinDateRanges(
+            listOf(other, month), listOf(number)
+        )
+        assertEquals(2, combined.size)
+        assertEquals("13–15 เมษายน", combined[1].text)
+        assertTrue(ThaiPhotoLinePolicy.isCalendarLabel(combined[1].text))
+        assertEquals(listOf(other), ThaiPhotoLinePolicy.attachLatinDateRanges(
+            listOf(other), listOf(number)))
+    }
+
 }
