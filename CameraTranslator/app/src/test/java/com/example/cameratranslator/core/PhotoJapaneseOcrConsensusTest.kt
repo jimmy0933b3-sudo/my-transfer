@@ -53,6 +53,31 @@ class PhotoJapaneseOcrConsensusTest {
         assertEquals(PhotoJapaneseOcrConsensus.Action.REPLACE, decision.action)
     }
 
+    @Test fun plausibleReadingBeatsSlightlyHigherIouWrongLine() {
+        val result = PhotoJapaneseOcrConsensus.evaluate(
+            block("集めたらチェックを入れよう", .92f),
+            listOf(
+                block("集めたらシートに記入しよう"),
+                block("集めたらチェックを入れよう", x = 6, w = 230)
+            )
+        )
+        assertEquals(PhotoJapaneseOcrConsensus.Action.KEEP, result.action)
+        assertEquals("readings_agree", result.reason)
+        assertEquals(1f, result.similarity!!, .001f)
+    }
+
+    @Test fun conflictingOverlappingAlternatesNeverRewriteWeakPaddleText() {
+        val result = PhotoJapaneseOcrConsensus.evaluate(
+            block("集めたらチェックを入れよら", .28f),
+            listOf(
+                block("集めたらシートに記入しよう"),
+                block("集めたらチェックを入れよう", x = 6, w = 230)
+            )
+        )
+        assertEquals(PhotoJapaneseOcrConsensus.Action.REVIEW, result.action)
+        assertEquals("conflicting_alternates", result.reason)
+    }
+
     @Test fun subLineRubyMustNotBeMatchedWithLargerMainText() {
         val decision = PhotoJapaneseOcrConsensus.evaluate(
             block("ダイキャストビークルは全部で10種類", .91f,
