@@ -27,6 +27,13 @@ internal object ThaiPhotoLinePolicy {
     )
 
     fun isDateRange(text: String): Boolean = range.matches(text.trim())
+    fun isCalendarLabel(text: String): Boolean {
+        val trimmed = text.trim()
+        return Regex("""^[0-9๐-๙]{1,2}\s*[-–—~]\s*[0-9๐-๙]{1,2}\s+""")
+            .containsMatchIn(trimmed) &&
+            month.matches(trimmed.substringAfterLast(' ').trim())
+    }
+
     fun isBrowserUrl(text: String): Boolean = latinUrl.containsMatchIn(text.trim())
 
     /** Reject Thai-script hallucinations made mostly of punctuation or combining marks. */
@@ -77,6 +84,13 @@ internal object ThaiPhotoLinePolicy {
         return 1f - prev[second.length] / max(first.length, second.length).toFloat() >= .68f
     }
 
+    /** Agreement between page-segmentation modes can retain medium-confidence text. */
+    fun corroborated(candidate: Line, primary: List<Line>, sparse: List<Line>): Boolean =
+        primary.any { overlap(candidate, it) >= .60f &&
+            closeText(candidate.text, it.text) } &&
+        sparse.any { overlap(candidate, it) >= .60f &&
+            closeText(candidate.text, it.text) }
+
     fun merge(primary: List<Line>, sparse: List<Line>): List<Line> {
         val kept = mutableListOf<Line>()
         for (item in (primary + sparse).filter { plausible(it.text) }) {
@@ -110,7 +124,7 @@ internal object ThaiPhotoLinePolicy {
                     val gap = candidate.left - item.right
                     month.matches(candidate.text.trim()) &&
                         sharedY >= height * .55f &&
-                        gap >= -height * .20f && gap <= max(28, height * 1.3f)
+                        gap >= -height * .20f && gap <= max(28f, height * 1.3f)
                 }
             if (monthIndex == null) {
                 result.add(item)
