@@ -437,7 +437,8 @@ class MainViewModel @Inject constructor(
         val rotation = if (alreadyUpright) 0
             else photoOcr.suggestUprightRotation(inputBitmap, requestedSource)
         DiagnosticLog.record("PERF", "方向辨識耗時=" +
-            (SystemClock.elapsedRealtime() - orientationStart) + "ms")
+            (SystemClock.elapsedRealtime() - orientationStart) + "ms" +
+            "；方式=" + if (alreadyUpright) "同張照片已校正" else "重新偵測")
         ensureCurrentPhoto(requestId)
         val bitmap = PhotoBitmapRotation.rotate(inputBitmap, rotation)
         DiagnosticLog.record("PHOTO", "方向校正=" + rotation + "°")
@@ -518,6 +519,8 @@ class MainViewModel @Inject constructor(
         // reader. Neither recognizer sends the bitmap over the network.
         var independentMatches = 0
         var alternateReadings = 0
+        var paragraphCorroborated = 0
+        var uncertainDisagreements = 0
         var reviewNeeded = 0
         var secondaryPhotoContext = emptyList<String>()
         // Auto Japanese photos should benefit from the same independent ML Kit
@@ -585,6 +588,12 @@ class MainViewModel @Inject constructor(
                         (decision.similarity?.toString() ?: "無"))
                 }
                 if (decision?.similarity != null) independentMatches++
+                if (decision?.reason == "parent_paragraph_corroboration")
+                    paragraphCorroborated++
+                if (decision?.reason in setOf("disagreement_unverified",
+                        "moderate_confidence_severe_disagreement",
+                        "low_confidence_disagreement", "conflicting_alternates"))
+                    uncertainDisagreements++
                 val changed = when (action) {
                     PhotoJapaneseOcrConsensus.Action.REPLACE -> {
                         alternateReadings++
@@ -645,6 +654,8 @@ class MainViewModel @Inject constructor(
                 "；Paddle=" + raw.size + "；MLKit=" + alternate.size +
                 "；對應比對=" + independentMatches +
                 "；採用MLKit=" + alternateReadings +
+                "；段落內佐證=" + paragraphCorroborated +
+                "；存在分歧=" + uncertainDisagreements +
                 "；無法證實的差異=" + lowAgreementCount +
                 "；待人工確認=" + reviewNeeded)
             checked
@@ -718,6 +729,10 @@ class MainViewModel @Inject constructor(
             photoSceneRecognized + "；第二套 OCR 線索=" +
             secondaryPhotoContext.size + "；本次OCR=" + mode)
         var photoGlossaryHits = 0
+        var brandPreserved = 0
+        var sameLanguagePreserved = 0
+        var cloudTranslationAccepted = 0
+        var offlineTranslationAccepted = 0
         // Azure translates up to 48 eligible OCR blocks in six-item batches.
         // This improves coverage beyond the old 18-block cap without allowing
         // unusually dense photos to create unbounded cloud usage.
@@ -889,6 +904,7 @@ class MainViewModel @Inject constructor(
             ) {
                 translated = original
                 provider = if (brand) "品牌名稱保留原文" else "相同語言原文"
+                if (brand) brandPreserved++ else sameLanguagePreserved++
             } else {
                 val corrected = photoGlossary.lookup(
                     original, block.sourceLanguage, requestedTarget, photoContext
@@ -961,7 +977,11 @@ class MainViewModel @Inject constructor(
                 rejectedCount++
                 trackReject("translation", resolved.rejectionReason)
             }
-            if (!resolved.translated.isNullOrBlank()) translatedCount++
+            if (!resolved.translated.isNullOrBlank()) {
+                translatedCount++
+                if (resolved.provider == "Azure 雲端") cloudTranslationAccepted++
+                if (resolved.provider.startsWith("ML Kit 離線")) offlineTranslationAccepted++
+            }
             result[i] = result[i].copy(
                 translated = resolved.translated, provider = resolved.provider
             )
@@ -991,6 +1011,10 @@ class MainViewModel @Inject constructor(
             composited.skipReasons.entries.joinToString { it.key + "=" + it.value })
         DiagnosticLog.record("QUALITY", "保留原文=" + rejectedCount +
             "；本機詞彙校正=" + photoGlossaryHits +
+            "；品牌保留=" + brandPreserved +
+            "；同語言原文=" + sameLanguagePreserved +
+            "；Azure有效譯文=" + cloudTranslationAccepted +
+            "；MLKit離線有效譯文=" + offlineTranslationAccepted +
             "；原因分類=" +
             qualityReasonCounts.entries.joinToString { it.key + "=" + it.value } +
             "；雲端品質不合格=" + cloudQualityFailedCount +
