@@ -72,12 +72,26 @@ class PaddleMobileOcrProvider(private val context: Context) {
             val valid = result.results.mapIndexedNotNull { index, item ->
                 val word = item.text.trim()
                 val box = item.box.points
-                if (word.length < 2 || box.size != 4) return@mapIndexedNotNull null
+                DiagnosticLog.photoBlock("OCR_PADDLE_RAW", index,
+                    selectedSource, word, "信心=" + item.confidence +
+                    "；頂點=" + box.joinToString(
+                        prefix = "[", postfix = "]", limit = 4
+                    ) { "(" + it.x.toInt() + "," + it.y.toInt() + ")" })
+                if (word.length < 2 || box.size != 4) {
+                    DiagnosticLog.photoBlock("OCR_FILTERED", index,
+                        selectedSource, word,
+                        "原因=" + if (word.length < 2) "too_short" else "invalid_points")
+                    return@mapIndexedNotNull null
+                }
                 val left = box.minOf { it.x }.toInt().coerceIn(0, bitmap.width)
                 val top = box.minOf { it.y }.toInt().coerceIn(0, bitmap.height)
                 val right = box.maxOf { it.x }.toInt().coerceIn(0, bitmap.width)
                 val bottom = box.maxOf { it.y }.toInt().coerceIn(0, bitmap.height)
                 if (right <= left || bottom <= top || item.confidence < 0.16f) {
+                    DiagnosticLog.photoBlock("OCR_FILTERED", index, selectedSource,
+                        word, "原因=" +
+                            if (item.confidence < 0.16f) "low_confidence"
+                            else "invalid_box")
                     return@mapIndexedNotNull null
                 }
                 val detectedScript = when {
