@@ -19,6 +19,13 @@ internal object PhotoTranslationGlossary {
      * exact-match toy-collection glossary. Do not apply these OCR-typo
      * corrections to unrelated Japanese photos.
      */
+    /** Context hints from both local OCR engines, never uploaded. */
+    fun isPawCollectionSheet(photoContext: List<String>): Boolean =
+        photoContext.any {
+            "パウバトロール" in it || "パウパトロール" in it ||
+                "パウ・パトロール" in it
+        } && photoContext.any { "コレクションシート" in it }
+
     fun builtin(
         original: String, source: String, target: String,
         photoContext: List<String> = emptyList()
@@ -27,10 +34,7 @@ internal object PhotoTranslationGlossary {
         if (target != "zh" || source !in setOf("en", "ja", "auto")) return null
         // Both signals are required. A generic Japanese sentence mentioning
         // a vehicle or a standalone "ピークル" must not be reinterpreted.
-        val pawCollectionSheet = photoContext.any {
-            "パウバトロール" in it || "パウパトロール" in it ||
-                "パウ・パトロール" in it
-        } && photoContext.any { "コレクションシート" in it }
+        val pawCollectionSheet = isPawCollectionSheet(photoContext)
         if (pawCollectionSheet && source == "en" && key == "bh tw") {
             // Low-confidence isolated logo/artifact: never invent "警告".
             return original.trim()
@@ -56,39 +60,52 @@ internal object PhotoTranslationGlossary {
                 // The glossary returns full translated blocks, not a global
                 // find-and-replace that could damage unrelated sentences.
                 return when (key.trim('。', '！', '!')) {
+                    "コクシンシート" -> "收藏清單"
+                    "集め口にを入よう" -> "收集到後，請在方框打勾！"
                     "ダイキャスト" -> "合金壓鑄"
                     "ピークル", "ビークル" -> "小車"
-                    "ダイキャストピークルは", "ダイキャストビークルは" -> "合金小車"
-                    "全部c10種類", "全部で10種類" -> "共有 10 種！"
-                    "キ三は全部", "キミは全部" -> "你能全部"
-                    "集められるかな？" -> "收集齊全嗎？"
-                    "チエイスボリスカー", "チェイスポリスカー" -> "阿奇警車"
+                    "ダイキャストピークルは", "ダイキャストビークルは",
+                    "タイキヤストビークルは" -> "合金小車"
+                    "全部c10種類", "全部gi0種類", "全部で10種類" -> "共有 10 種！"
+                    "キ三は全部", "キミは全部", "牛三は全部" -> "你能全部"
+                    "集められるかな？", "集められるかな子" -> "收集齊全嗎？"
+                    "チエイスボリスカー", "チェイスポリスカー",
+                    "チエイスポリスカー" -> "阿奇警車"
                     "マージャルコアイヤートラック",
-                    "マーシャルファイヤートラック" -> "毛毛消防車"
+                    "マーシャルファイヤートラック",
+                    "マーンルアイートラリク" -> "毛毛消防車"
                     "スカイコライングヘリ", "スカイフライングヘリ" -> "天天直升機"
                     "口ラブルバワーブルドーザー",
-                    "ラブルパワーブルドーザー" -> "小礫推土機"
+                    "ラブルパワーブルドーザー",
+                    "ラゴルパーゴルドーー" -> "小礫推土機"
                     "ロッキーコリーンクルーザー",
-                    "ロッキークリーンクルーザー" -> "灰灰回收車"
+                    "ロッキークリーンクルーザー",
+                    "ロツキーリーンルーー" -> "灰灰回收車"
                     "スーマ ホバ-クsコト", "ズーマ ホバークラフト" -> "路馬氣墊船"
-                    "ケントダッシニバギー", "ケントダッシュバギー" -> "萊德越野車"
+                    "ケントダッシニバギー", "ケントダッシュバギー",
+                    "ケントッシンバ" -> "萊德越野車"
                     "エベレストスノーキャント",
                     "エベレストスノーキャット" -> "珠珠雪地車"
-                    "ギコトパック限定カラービークル" -> "禮盒限定配色小車"
+                    "ギコトパック限定カラービークル",
+                    "ギトパツ限定カラービール" -> "禮盒限定配色小車"
                     "ギフトバツクでしか", "ギフトパックでしか" ->
-                        "只有在禮盒裡才"
-                    "手に入らない" -> "能入手"
-                    "スペシャルなメタリックver.0" -> "特別金屬色版本"
+                        "禮盒限定"
+                    // Preserve the negation of 手に入らない. In context,
+                    // the two printed lines mean gift-pack-only availability.
+                    "手に入らない" -> "無法單獨取得"
+                    "スペシャルなメタリックver.0",
+                    "スハシヤルなメタリック.の" -> "特別金屬色版本"
                     "ビークルだよ" -> "就是這款小車！"
                     "マージャル コアイヤートラック メタリックver.",
                     "マーシャル ファイヤートラック メタリックver." ->
                         "毛毛消防車金屬色版"
                     "ラブル パワーブルドーザーメタリックver",
-                    "ラブル パワーブルドーザーメタリックver." ->
+                    "ラブル パワーブルドーザーメタリックver.",
+                    "ラブルパーブドーザーメタリツ" ->
                         "小礫推土機金屬色版"
                     // An isolated OCR fragment near the printed footnote
                     // has no reliable meaning. Keep the original pixels.
-                    "いさい" -> original.trim()
+                    "いさい", "たしょうこと" -> original.trim()
                     else -> null
                 }
             }

@@ -51,4 +51,14 @@ class PhotoTranslationQualityTest {
         assertNotNull(PhotoTranslationQuality.rejectTranslation(
             "ダイキャストビークルは全部で10種類！", "寶", "ja", "zh"))
     }
+
+    @Test fun lowConfidenceShortOcrNoiseIsNotPaintedOrSentToAzure() {
+        assertNotNull(PhotoTranslationQuality.rejectOcr("Dh", "en", 0.40f))
+        assertNotNull(PhotoTranslationQuality.rejectOcr("Hんてi", "ja", 0.32f))
+        assertNotNull(PhotoTranslationQuality.rejectOcr("C2O8", "en", 0.32f))
+        assertNull(PhotoTranslationQuality.rejectOcr("PA", "en", 0.67f))
+        assertNull(PhotoTranslationQuality.rejectOcr("阿奇", "zh", 0.35f))
+        assertNull(PhotoTranslationQuality.rejectOcr(
+            "コレクションシート", "ja", 0.31f))
+    }
 }
