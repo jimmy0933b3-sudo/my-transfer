@@ -22,6 +22,8 @@ internal object PhotoTranslationGlossary {
             // translation in isolation is frequently incorrect.
             when (key.trim('。', '！', '!')) {
                 "コレクションシート" -> return "收藏清單"
+                "ギフトパック限定カラービークル" -> return "禮盒限定配色小車"
+                "ダイキャストビークル" -> return "合金小車"
                 "ダイキャストビークルは全部で10種類" -> return "合金小車總共有 10 種"
                 "キミは全部集められるかな？" -> return "你能全部收集到嗎？"
             }
