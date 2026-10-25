@@ -48,6 +48,10 @@ internal object PhotoNumericEvidence {
 
     private fun tokens(text: String, includeWritten: Boolean, includeThaiMonth: Boolean = false): List<String> {
         val normalized = Normalizer.normalize(text, Normalizer.Form.NFKC)
+            .map { digit ->
+                if (digit in '๐'..'๙') ('0'.code + digit.code - '๐'.code).toChar()
+                else digit
+            }.joinToString("")
         val result = arabic.findAll(normalized).map { match ->
             val raw = match.value.replace(thousands, "")
             if (raw.all(Char::isDigit)) raw.trimStart('0').ifEmpty { "0" } else raw

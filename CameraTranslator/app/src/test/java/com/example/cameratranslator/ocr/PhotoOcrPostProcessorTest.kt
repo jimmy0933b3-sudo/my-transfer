@@ -76,6 +76,21 @@ class PhotoOcrPostProcessorTest {
         assertEquals(2, output.size)
     }
 
+    @Test fun thaiPosterKeepsThreeIndependentPaintRectangles() {
+        // Regression from the 2026-10-25 Songkran poster logs: the Thai
+        // postprocessor previously combined y=557..820 into one huge box.
+        val blocks = listOf(
+            block("ประเทศไทย", 123, 557, 589, 636, 0, "th"),
+            block("เทศกาลสงกรานต์", 14, 659, 710, 741, 1, "th"),
+            block("ความสุข", 199, 747, 517, 820, 2, "th")
+        )
+        val result = PhotoOcrPostProcessor.combine(blocks)
+        assertEquals(3, result.size)
+        assertEquals(listOf(557, 659, 747), result.map { it.top })
+        assertEquals(listOf(listOf(0), listOf(1), listOf(2)),
+            result.map { it.originalIndices })
+    }
+
     @Test fun fixesOZeroOnlyInLikelyAlphabeticWords() {
         assertEquals(
             "Create your own Prehistoric World!",
