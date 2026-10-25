@@ -47,27 +47,46 @@ internal object ThaiPhotoMixedScriptPolicy {
     /** Same-baseline neighboring words become one phrase for Azure. */
     fun groupEnglish(blocks: List<Block>): List<Block> {
         val sorted = blocks.filter(::reliableEnglishCandidate)
-            .sortedWith(compareBy<Block> { it.top }.thenBy { it.left })
-        val rows = mutableListOf<MutableList<Block>>()
+            .sortedWith(compareBy<Block> { (it.top + it.bottom) / 2 }.thenBy { it.left })
+        val visualRows = mutableListOf<MutableList<Block>>()
         for (block in sorted) {
-            val row = rows.lastOrNull()
-            val last = row?.lastOrNull()
-            if (row != null && last != null &&
-                abs((block.top + block.bottom) - (last.top + last.bottom)) <=
-                    max(block.height, last.height) * .5f &&
-                block.left >= last.right - 5 &&
-                block.left - last.right <= max(block.height, last.height) * 1.25f) {
-                row.add(block)
-            } else rows.add(mutableListOf(block))
+            val row = visualRows.firstOrNull { existing ->
+                val representative = existing.first()
+                abs((block.top + block.bottom) - 
+                    (representative.top + representative.bottom)) <=
+                    max(block.height, representative.height) * .55f &&
+                    min(block.bottom, representative.bottom) -
+                        max(block.top, representative.top) >=
+                        min(block.height, representative.height) * .45f
+            }
+            if (row == null) visualRows.add(mutableListOf(block))
+            else row.add(block)
         }
-        return rows.map { row ->
-            if (row.size == 1) row[0] else Block(
-                row.joinToString(" ") { it.text.trim() },
-                row.minOf { it.left }, row.minOf { it.top },
-                row.maxOf { it.right }, row.maxOf { it.bottom },
-                row.minOf { it.confidence }
-            )
+        val result = mutableListOf<Block>()
+        for (row in visualRows) {
+            var cluster = mutableListOf<Block>()
+            fun emit() {
+                if (cluster.isEmpty()) return
+                val group = cluster.toList()
+                result.add(if (group.size == 1) group[0] else Block(
+                    group.joinToString(" ") { it.text.trim() },
+                    group.minOf { it.left }, group.minOf { it.top },
+                    group.maxOf { it.right }, group.maxOf { it.bottom },
+                    group.minOf { it.confidence }
+                ))
+                cluster = mutableListOf()
+            }
+            for (part in row.sortedBy { it.left }) {
+                val last = cluster.lastOrNull()
+                if (last != null &&
+                    (part.left < last.right - 5 ||
+                        part.left - last.right >
+                            max(part.height, last.height) * 1.25f)) emit()
+                cluster.add(part)
+            }
+            emit()
         }
+        return result.sortedWith(compareBy<Block> { it.top }.thenBy { it.left })
     }
 
     /** Independent clear English glyphs can veto same-area Thai hallucinations.
