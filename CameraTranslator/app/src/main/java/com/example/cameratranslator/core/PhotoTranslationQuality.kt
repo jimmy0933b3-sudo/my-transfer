@@ -50,7 +50,9 @@ internal object PhotoTranslationQuality {
             }
         }
         if (source == "zh" && chinese == 0) return "無法確認中文文字"
-        if (source == "th" && !thai.containsMatchIn(value)) return "無法確認泰文字元"
+        if (source == "th" && !thai.containsMatchIn(value) &&
+            !com.example.cameratranslator.ocr.ThaiPhotoLinePolicy.isDateRange(value))
+            return "無法確認泰文字元"
         if (source == "en" && !Regex("[A-Za-z]").containsMatchIn(value)) {
             return "無法確認英文文字"
         }
