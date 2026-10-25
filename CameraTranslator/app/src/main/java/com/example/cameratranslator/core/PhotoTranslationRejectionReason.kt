@@ -11,6 +11,7 @@ internal object PhotoTranslationRejectionReason {
             reason.startsWith("辨識文字不足") -> "ocr_too_short"
             reason.startsWith("OCR 包含過多無法辨識的字元") -> "ocr_invalid_chars"
             reason.startsWith("這段不是可確認的日文") -> "ocr_not_japanese"
+            reason.startsWith("兩套日文 OCR 辨識差異大") -> "ocr_crosscheck_disagreement"
             reason.startsWith("日文辨識混入英文片段") -> "ocr_mixed_latin"
             reason.startsWith("無法確認中文文字") -> "ocr_not_chinese"
             reason.startsWith("無法確認泰文字元") -> "ocr_not_thai"
