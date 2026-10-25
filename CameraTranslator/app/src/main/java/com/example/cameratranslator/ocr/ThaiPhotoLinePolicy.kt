@@ -48,7 +48,7 @@ internal object ThaiPhotoLinePolicy {
         val value = text.trim()
         if (calendarDate.matches(value)) return value
         val corrupted = Regex(
-            """^([0-9]{1,2})\\s*[-–—~]\\s*([0-9])([\\u0e00-\\u0e7f])([0-9])\\s+(.+)$"""
+            """^([0-9]{1,2})\s*[-–—~]\s*([0-9])([\u0e00-\u0e7f])([0-9])\s+(.+)$"""
         ).matchEntire(value) ?: return value
         val first = corrupted.groupValues[1].toIntOrNull() ?: return value
         val last = (corrupted.groupValues[2] + corrupted.groupValues[4]).toIntOrNull()
@@ -80,19 +80,18 @@ internal object ThaiPhotoLinePolicy {
     // reported Songkran poster, malformed Thai scored .90 while readable
     // ประเทศไทย scored .84. Reject glyph soup before it is translated.
     private val repeatedThaiMarks = Regex("[\\u0e31\\u0e34-\\u0e3a\\u0e47-\\u0e4e]{3,}")
-    private val unsupportedAscii = Regex("[\\\\|\\[\\]{}<>]")
     private fun noisyThai(text: String): Boolean {
         if (repeatedThaiMarks.containsMatchIn(text)) return true
         val marks = text.count { it == '\u0e31' || it in '\u0e34'..'\u0e3a' ||
             it in '\u0e47'..'\u0e4e' }
         val consonants = text.count { it in '\u0e01'..'\u0e2e' }
         if (marks >= 6 && marks > consonants) return true
-        if (unsupportedAscii.findAll(text).count() >= 2) return true
+        if (text.count { it in "|[]{}<>" } >= 2) return true
         return false
     }
 
     private fun quality(line: Line): Float {
-        val punctuation = unsupportedAscii.findAll(line.text).count()
+        val punctuation = line.text.count { it in "|[]{}<>" }
         val startsWithOddMark = line.text.trimStart().firstOrNull()?.let {
             it in '\u0e47'..'\u0e4e' || it == 'ๆ'
         } == true
