@@ -194,4 +194,40 @@ class ThaiPhotoLinePolicyTest {
         assertTrue(ThaiPhotoLinePolicy.plausible("รูขุมขนกระชับ"))
         assertTrue(ThaiPhotoLinePolicy.plausible("ริ้วรอยเล็ก"))
     }
+
+    @Test fun strongerPaddleRepairsSamePhysicalThaiLineDespiteDifferentStrings() {
+        // Android 16 v1.6.35 real photo: "毛孔緊緻" wrongly painted as "薩曼震撼".
+        // OCR engines cover exactly the same word but use different padding.
+        val tess = line("ธฐหมหนกระชบ", 337, 859, 160, 17, .76346666f)
+        val paddle = line("รูVุมVนกระชับ", 332, 848, 168, 37, .8218923f)
+        val merged = ThaiPhotoLinePolicy.combineIndependent(listOf(tess), listOf(paddle))
+        assertEquals(1, merged.size)
+        assertEquals(paddle, merged.single())
+    }
+
+    @Test fun similarThaiRowsMustNotReplaceEachOtherByFootprint() {
+        val first = line("รูขุมขนกระชับ", 337, 859, 160, 25, .78f)
+        val nearby = line("ริ้วรอยเล็ก", 332, 887, 168, 34, .99f)
+        val merged = ThaiPhotoLinePolicy.combineIndependent(listOf(first), listOf(nearby))
+        assertEquals(2, merged.size)
+        assertTrue(merged.contains(first))
+        assertTrue(merged.contains(nearby))
+    }
+
+    @Test fun narrowerDifferentColumnMustNotOverrideWholeThaiLine() {
+        val long = line("เผยผิวสว่าง", 100, 860, 270, 32, .77f)
+        val short = line("กระจ่างใส", 240, 860, 130, 34, .99f)
+        val merged = ThaiPhotoLinePolicy.combineIndependent(listOf(long), listOf(short))
+        // A partly overlapping Paddle box is not proof of a distinct
+        // printed caption: retain Tesseract, do not overwrite or duplicate.
+        assertEquals(1, merged.size)
+        assertEquals(long, merged.single())
+    }
+
+    @Test fun lowerConfidencePaddleCannotReplaceConflictingTrustedThai() {
+        val trusted = line("รูขุมขนกระชับ", 337, 859, 160, 17, .96f)
+        val wrong = line("ธฐหมหนกระชบ", 332, 848, 168, 37, .84f)
+        assertEquals(listOf(trusted),
+            ThaiPhotoLinePolicy.combineIndependent(listOf(trusted), listOf(wrong)))
+    }
 }
