@@ -199,6 +199,16 @@ class ThaiPhotoOcrProvider(private val context: Context) {
                         ThaiPhotoLinePolicy.isCalendarLabel(line.text))
             }
             trace("THAI_TRUSTED", trusted)
+            val verified = trusted.map { line ->
+                val repaired = ThaiPhotoLinePolicy.normalizeCalendarLabel(line.text)
+                if (repaired != line.text) {
+                    com.example.cameratranslator.core.DiagnosticLog.photoBlock(
+                        "THAI_DATE_REPAIRED", 0, "th", repaired,
+                        "校驗過 OCR 數字，原字串僅有一個泰文誤入日期數字間"
+                    )
+                    line.copy(text = repaired)
+                } else line
+            }
             com.example.cameratranslator.core.DiagnosticLog.record(
                 "THAI_OCR", "AUTO候選=" + auto.size +
                     "；SPARSE候選=" + sparse.size +
@@ -207,7 +217,7 @@ class ThaiPhotoOcrProvider(private val context: Context) {
                     "；去重合併=" + merged.size +
                     "；信心通過=" + trusted.size
             )
-            trusted.mapIndexed { index, line ->
+            verified.mapIndexed { index, line ->
                 TextElement(
                     id = "th:" + index + ":" + line.text.hashCode(),
                     originalText = line.text,
