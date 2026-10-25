@@ -165,6 +165,18 @@ class ThaiPhotoOcrProvider(private val context: Context) {
             val sparse = recognizeLines(
                 tess, bitmap, TessBaseAPI.PageSegMode.PSM_SPARSE_TEXT, 25f
             )
+            fun trace(stage: String, items: List<ThaiPhotoLinePolicy.Line>) {
+                items.forEachIndexed { index, line ->
+                    com.example.cameratranslator.core.DiagnosticLog.photoBlock(
+                        stage, index, "th", line.text,
+                        "框=[${line.left},${line.top}][${line.right},${line.bottom}]" +
+                            "；信心=${line.confidence}" +
+                            "；單行幾何=${ThaiPhotoLinePolicy.plausibleLineGeometry(line, bitmap.width)}"
+                    )
+                }
+            }
+            trace("THAI_AUTO", auto)
+            trace("THAI_SPARSE", sparse)
             val firstPass = ThaiPhotoLinePolicy.merge(auto, sparse)
             val recoveryRegions = ThaiPhotoLinePolicy.recoveryRegions(
                 firstPass.filter { it.confidence >= .55f }, bitmap.width, bitmap.height)
@@ -175,7 +187,9 @@ class ThaiPhotoOcrProvider(private val context: Context) {
                     recognizeRecoveryLine(tess, bitmap, region, ribbon)
                 }
             }
+            trace("THAI_RECOVER", recovered)
             val merged = ThaiPhotoLinePolicy.merge(auto + recovered, sparse)
+            trace("THAI_MERGED", merged)
             val withDates = ThaiPhotoLinePolicy.attachLatinDateRanges(merged, latinDateHints)
             val trusted = withDates.filter { line ->
                 line.confidence >= .55f ||
@@ -184,6 +198,7 @@ class ThaiPhotoOcrProvider(private val context: Context) {
                     (line.confidence >= .30f &&
                         ThaiPhotoLinePolicy.isCalendarLabel(line.text))
             }
+            trace("THAI_TRUSTED", trusted)
             com.example.cameratranslator.core.DiagnosticLog.record(
                 "THAI_OCR", "AUTO候選=" + auto.size +
                     "；SPARSE候選=" + sparse.size +
@@ -333,7 +348,18 @@ class ThaiPhotoOcrProvider(private val context: Context) {
                     top !in 0 until original.height ||
                     right > original.width || bottom > original.height ||
                     right - left < 12 || bottom - top < 10) return null
-                return ThaiPhotoLinePolicy.Line(value, left, top, right, bottom, confidence)
+                val candidate = ThaiPhotoLinePolicy.Line(
+                    value, left, top, right, bottom, confidence
+                )
+                if (!ThaiPhotoLinePolicy.plausibleLineGeometry(candidate, original.width)) {
+                    com.example.cameratranslator.core.DiagnosticLog.photoBlock(
+                        "THAI_REJECT_SHAPE", 0, "th", value,
+                        "來源=局部重辨；框=[${left},${top}][${right},${bottom}]" +
+                            "；原因=疑似多行合併"
+                    )
+                    return null
+                }
+                return candidate
             } finally {
                 iterator.delete()
             }
@@ -368,11 +394,18 @@ class ThaiPhotoOcrProvider(private val context: Context) {
                     box.width() < bitmap.width * 0.92f &&
                     box.height() < bitmap.height * 0.5f
                 ) {
-                    results.add(
-                        ThaiPhotoLinePolicy.Line(text,
-                            box.left, box.top, box.right, box.bottom,
-                            (confidence / 100f).coerceIn(0f, 1f))
-                    )
+                    val candidate = ThaiPhotoLinePolicy.Line(text,
+                        box.left, box.top, box.right, box.bottom,
+                        (confidence / 100f).coerceIn(0f, 1f))
+                    if (ThaiPhotoLinePolicy.plausibleLineGeometry(candidate, bitmap.width)) {
+                        results.add(candidate)
+                    } else {
+                        com.example.cameratranslator.core.DiagnosticLog.photoBlock(
+                            "THAI_REJECT_SHAPE", results.size, "th", text,
+                            "來源=" + pageMode + "；框=" + box.toShortString() +
+                                "；原因=疑似多行合併"
+                        )
+                    }
                 }
             } while (iterator.next(level) && results.size < 48)
             return results
