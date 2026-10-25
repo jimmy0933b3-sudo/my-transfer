@@ -16,6 +16,18 @@ internal object PhotoBrandPolicy {
             (sourceLanguage == "en" && requestedSource !in setOf("ja", "zh", "th"))) {
             return false
         }
+        val token = text.trim()
+        // Product packaging embeds short standalone trademarks, model names
+        // and legal marks alongside Japanese words (PAW, TOMY, TM, ver.).
+        // Translating them as ordinary English alters the printed product
+        // identity. Keep isolated short capitalized marks unchanged.
+        if (sourceLanguage == "en" && requestedSource in setOf("ja", "zh", "th")) {
+            val literalMark = token.trim('®', '©', '™', '.', ' ')
+            if (literalMark.length in 2..12 &&
+                literalMark.any(Char::isLetter) &&
+                literalMark.all { it in 'A'..'Z' || it.isDigit() }) return true
+            if (token.matches(Regex("(?i)^(?:ver\\.?|tm|©|®|™)$"))) return true
+        }
         val words = text.trim().split(Regex("\\s+"))
         if (words.size !in 2..4) return false
         if (!text.all { it.isLetter() || it.isWhitespace() || it in "-®©.&" }) return false
