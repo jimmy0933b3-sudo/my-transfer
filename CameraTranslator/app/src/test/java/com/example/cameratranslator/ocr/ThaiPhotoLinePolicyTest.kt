@@ -218,8 +218,10 @@ class ThaiPhotoLinePolicyTest {
         val long = line("เผยผิวสว่าง", 100, 860, 270, 32, .77f)
         val short = line("กระจ่างใส", 240, 860, 130, 34, .99f)
         val merged = ThaiPhotoLinePolicy.combineIndependent(listOf(long), listOf(short))
-        assertEquals(2, merged.size)
-        assertTrue(merged.contains(long))
+        // A partly overlapping Paddle box is not proof of a distinct
+        // printed caption: retain Tesseract, do not overwrite or duplicate.
+        assertEquals(1, merged.size)
+        assertEquals(long, merged.single())
     }
 
     @Test fun lowerConfidencePaddleCannotReplaceConflictingTrustedThai() {
