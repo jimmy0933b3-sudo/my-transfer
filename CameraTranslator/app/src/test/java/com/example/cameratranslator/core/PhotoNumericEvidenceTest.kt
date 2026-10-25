@@ -26,6 +26,10 @@ class PhotoNumericEvidenceTest {
             "13-15 เมษายน", "4月13日至15日"))
         assertFalse(PhotoNumericEvidence.mismatched(
             "13–15 เมษายน", "四月十三日至十五日"))
+        assertFalse(PhotoNumericEvidence.mismatched(
+            "๑๓–๑๕ เมษายน", "4月13日至15日"))
+        assertTrue(PhotoNumericEvidence.mismatched(
+            "๑๓–๑๕ เมษายน", "4月13日至16日"))
         assertTrue(PhotoNumericEvidence.mismatched(
             "13–15 เมษายน", "4月13日至16日"))
         assertTrue(PhotoNumericEvidence.mismatched(
