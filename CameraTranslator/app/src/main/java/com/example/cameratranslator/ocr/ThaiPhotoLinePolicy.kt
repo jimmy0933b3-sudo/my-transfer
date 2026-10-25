@@ -39,11 +39,31 @@ internal object ThaiPhotoLinePolicy {
         }.joinToString("").toIntOrNull()
 
     /**
+     * Remove one misread Thai glyph BETWEEN two clearly visible Arabic date
+     * digits, only when a known Thai month follows and the result is a real
+     * increasing day range. 13-1ไ5 เมษายน -> 13-15 เมษายน.
+     * Do not guess missing digits, arbitrary months or nearby captions.
+     */
+    fun normalizeCalendarLabel(text: String): String {
+        val value = text.trim()
+        if (calendarDate.matches(value)) return value
+        val corrupted = Regex(
+            """^([0-9]{1,2})\\s*[-–—~]\\s*([0-9])([\\u0e00-\\u0e7f])([0-9])\\s+(.+)$"""
+        ).matchEntire(value) ?: return value
+        val first = corrupted.groupValues[1].toIntOrNull() ?: return value
+        val last = (corrupted.groupValues[2] + corrupted.groupValues[4]).toIntOrNull()
+            ?: return value
+        val month = corrupted.groupValues[5].trim()
+        if (first !in 1..31 || last !in first..31 || month !in monthNames) return value
+        return "${first}-${last} ${month}"
+    }
+
+    /**
      * A verified Thai calendar range can be translated without allowing
      * a cloud model to invent a different month or day.
      */
     fun translateCalendarLabel(text: String): String? {
-        val match = calendarDate.matchEntire(text.trim()) ?: return null
+        val match = calendarDate.matchEntire(normalizeCalendarLabel(text)) ?: return null
         val first = thaiInteger(match.groupValues[1]) ?: return null
         val last = thaiInteger(match.groupValues[2]) ?: return null
         val month = monthNames.indexOf(match.groupValues[3].trim()) + 1
