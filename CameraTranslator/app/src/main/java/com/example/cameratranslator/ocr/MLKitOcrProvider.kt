@@ -25,6 +25,8 @@ import kotlin.math.min
 class MLKitOcrProvider(context: Context) : OcrProvider {
     private val thai = ThaiPhotoOcrProvider(context.applicationContext)
     private val thaiPaddle = PaddleMobileOcrProvider(context.applicationContext)
+    @Volatile var lastThaiPaddleUsed: Boolean = false
+        private set
     private val latin = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private val japanese = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
     private val chinese = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
@@ -56,6 +58,7 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
     suspend fun recognizeTextFromBitmap(bitmap: Bitmap, selectedSource: String): List<TextElement> {
         require(PhotoOcrLanguages.supported(selectedSource)) { "Unsupported photo OCR language" }
         if (selectedSource == "th") {
+            lastThaiPaddleUsed = false
             val latinBlocks = read(latin, InputImage.fromBitmap(bitmap, 0), "en")
             val rangePattern = Regex("""(?<![0-9])(?:[0-9๐-๙]{1,2})\s*[-–—~]\s*(?:[0-9๐-๙]{1,2})(?![0-9])""")
             val dateHints = latinBlocks.mapNotNull { item ->
@@ -94,6 +97,7 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
                 )
                 emptyList()
             }
+            lastThaiPaddleUsed = paddleLines.isNotEmpty()
             val compared = if (paddleLines.isEmpty()) thaiLines else {
                 ThaiPhotoLinePolicy.combineIndependent(
                     thaiLines.mapNotNull { item ->
