@@ -22,17 +22,47 @@ internal object ThaiPhotoLinePolicy {
     private val month = Regex(
         """^(?:มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม)$"""
     )
+    private val monthNames = listOf(
+        "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน",
+        "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม",
+        "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
+    )
+    private val calendarDate = Regex(
+        """^([0-9๐-๙]{1,2})\s*[-–—~]\s*([0-9๐-๙]{1,2})\s+(.+)$"""
+    )
+    private fun thaiInteger(value: String): Int? =
+        value.map { digit ->
+            when (digit) {
+                in '๐'..'๙' -> ('0'.code + digit.code - '๐'.code).toChar()
+                else -> digit
+            }
+        }.joinToString("").toIntOrNull()
+
+    /**
+     * A verified Thai calendar range can be translated without allowing
+     * a cloud model to invent a different month or day.
+     */
+    fun translateCalendarLabel(text: String): String? {
+        val match = calendarDate.matchEntire(text.trim()) ?: return null
+        val first = thaiInteger(match.groupValues[1]) ?: return null
+        val last = thaiInteger(match.groupValues[2]) ?: return null
+        val month = monthNames.indexOf(match.groupValues[3].trim()) + 1
+        if (month == 0 || first !in 1..31 || last !in first..31) return null
+        return "${month}月${first}日至${last}日"
+    }
+
+    /** A multi-line Tesseract rectangle must not be presented as one line. */
+    fun plausibleLineGeometry(line: Line, imageWidth: Int): Boolean =
+        line.width >= 10 && line.height >= 10 && imageWidth > 0 &&
+            line.height <= max(50f, imageWidth * .22f)
+
     private val latinUrl = Regex(
         """(?i)(?:https?://|(?:[a-z0-9-]+\.)+(?:com|net|org|co|tw|io|app)(?:/|$))"""
     )
 
     fun isDateRange(text: String): Boolean = range.matches(text.trim())
-    fun isCalendarLabel(text: String): Boolean {
-        val trimmed = text.trim()
-        return Regex("""^[0-9๐-๙]{1,2}\s*[-–—~]\s*[0-9๐-๙]{1,2}\s+""")
-            .containsMatchIn(trimmed) &&
-            month.matches(trimmed.substringAfterLast(' ').trim())
-    }
+    fun isCalendarLabel(text: String): Boolean =
+        translateCalendarLabel(text) != null
 
     fun isBrowserUrl(text: String): Boolean = latinUrl.containsMatchIn(text.trim())
 
