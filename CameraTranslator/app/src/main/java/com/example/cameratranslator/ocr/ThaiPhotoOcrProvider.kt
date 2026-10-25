@@ -229,8 +229,6 @@ class ThaiPhotoOcrProvider(private val context: Context) {
             // Restrict inverse-contrast processing to a substantial red
             // ribbon. Do not invert the light poster background or toolbar.
             val counts = IntArray(height)
-            val xmin = IntArray(height) { width }
-            val xmax = IntArray(height) { -1 }
             for (y in 0 until height) for (x in 0 until width) {
                 val px = pixels[y * width + x]
                 val red = android.graphics.Color.red(px)
@@ -239,16 +237,42 @@ class ThaiPhotoOcrProvider(private val context: Context) {
                 if (red > 135 && red > green * 1.45f &&
                     red > blue * 1.12f) {
                     counts[y]++
-                    xmin[y] = minOf(xmin[y], x)
-                    xmax[y] = maxOf(xmax[y], x)
                 }
             }
             val peak = counts.maxOrNull() ?: 0
             if (peak < width * .17f) return null
             val rows = (0 until height).filter { counts[it] >= peak * .55f }
             if (rows.size < 5) return null
-            val x1 = (rows.minOf { xmin[it] } - 2).coerceAtLeast(0)
-            val x2 = (rows.maxOf { xmax[it] } + 2).coerceAtMost(width - 1)
+            // Ignore isolated red decorations at the far side of the
+            // poster. The actual banner occupies a continuous x-range
+            // through many selected rows, not one stray colored pixel.
+            val columnCounts = IntArray(width)
+            for (y in rows) for (x in 0 until width) {
+                val px = pixels[y * width + x]
+                val red = android.graphics.Color.red(px)
+                val green = android.graphics.Color.green(px)
+                val blue = android.graphics.Color.blue(px)
+                if (red > 135 && red > green * 1.45f &&
+                    red > blue * 1.12f) columnCounts[x]++
+            }
+            val columnThreshold = rows.size * .25f
+            var runStart = -1
+            var bestStart = -1
+            var bestEnd = -1
+            for (x in 0..width) {
+                val qualifies = x < width && columnCounts[x] >= columnThreshold
+                if (qualifies && runStart < 0) runStart = x
+                if (!qualifies && runStart >= 0) {
+                    if (x - runStart > bestEnd - bestStart) {
+                        bestStart = runStart
+                        bestEnd = x
+                    }
+                    runStart = -1
+                }
+            }
+            if (bestStart < 0 || bestEnd - bestStart < width * .15f) return null
+            val x1 = (bestStart - 3).coerceAtLeast(0)
+            val x2 = (bestEnd + 3).coerceAtMost(width - 1)
             val y1 = (rows.first() - 2).coerceAtLeast(0)
             val y2 = (rows.last() + 2).coerceAtMost(height - 1)
             for (y in y1..y2) for (x in x1..x2) {
