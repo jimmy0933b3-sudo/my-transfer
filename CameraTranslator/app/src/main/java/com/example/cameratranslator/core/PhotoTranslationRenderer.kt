@@ -279,26 +279,47 @@ internal object PhotoTranslationRenderer {
         val width = rect.width()
         val height = rect.height()
         if (width <= 0 || height <= 0) return
+        // The earlier 4-edge interpolation copied ONE source pixel from the
+        // upper/lower OCR border for every output column. Thai poster glyphs
+        // and diacritics touch those boundaries, producing long colored
+        // vertical streaks through the translated headline.
+        //
+        // Instead sample robust patches well OUTSIDE the OCR rectangle at
+        // four corners, then reconstruct a smooth bilinear background.
+        // This is a conservative gradient reconstruction, not inpainting.
+        val margin = (min(width, height) * .13f).toInt().coerceIn(8, 28)
+        fun corner(x: Int, y: Int): Int {
+            val rr = IntArray(25)
+            val gg = IntArray(25)
+            val bb = IntArray(25)
+            var index = 0
+            for (dy in -2..2) for (dx in -2..2) {
+                val p = original.getPixel(
+                    (x + dx).coerceIn(0, original.width - 1),
+                    (y + dy).coerceIn(0, original.height - 1)
+                )
+                rr[index] = Color.red(p)
+                gg[index] = Color.green(p)
+                bb[index] = Color.blue(p)
+                index++
+            }
+            rr.sort()
+            gg.sort()
+            bb.sort()
+            return Color.rgb(rr[12], gg[12], bb[12])
+        }
+        val topLeft = corner(rect.left - margin, rect.top - margin)
+        val topRight = corner(rect.right + margin, rect.top - margin)
+        val bottomLeft = corner(rect.left - margin, rect.bottom + margin)
+        val bottomRight = corner(rect.right + margin, rect.bottom + margin)
         val pixels = IntArray(width * height)
-        // OCR bounds hug the glyphs. Sampling only 2-3px outside often
-        // picks up the dark ink/outline and creates a muddy gray rectangle.
-        // Sample farther into the label's actual surrounding background.
-        val margin = (min(width, height) * 0.085f).toInt().coerceIn(4, 24)
-        val l = (rect.left - margin).coerceIn(0, original.width - 1)
-        val r = (rect.right + margin).coerceIn(0, original.width - 1)
-        val t = (rect.top - margin).coerceIn(0, original.height - 1)
-        val b = (rect.bottom + margin).coerceIn(0, original.height - 1)
         for (y in 0 until height) {
-            val fy = y.toFloat() / height.coerceAtLeast(1)
-            val left = original.getPixel(l, rect.top + y)
-            val right = original.getPixel(r, rect.top + y)
+            val fy = (y + .5f) / height
             for (x in 0 until width) {
-                val fx = x.toFloat() / width.coerceAtLeast(1)
-                val top = original.getPixel(rect.left + x, t)
-                val bottom = original.getPixel(rect.left + x, b)
-                val vertical = blend(top, bottom, fy)
-                val horizontal = blend(left, right, fx)
-                pixels[y * width + x] = blend(vertical, horizontal, 0.5f)
+                val fx = (x + .5f) / width
+                val top = blend(topLeft, topRight, fx)
+                val bottom = blend(bottomLeft, bottomRight, fx)
+                pixels[y * width + x] = blend(top, bottom, fy)
             }
         }
         target.setPixels(pixels, 0, width, rect.left, rect.top, width, height)

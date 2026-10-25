@@ -148,7 +148,9 @@ class ThaiPhotoOcrProvider(private val context: Context) {
         return ThaiModelIntegrity.verified(model)
     }
 
-    suspend fun recognize(bitmap: Bitmap): List<TextElement> = withContext(Dispatchers.IO) {
+    internal suspend fun recognize(
+        bitmap: Bitmap, latinDateHints: List<ThaiPhotoLinePolicy.Line> = emptyList()
+    ): List<TextElement> = withContext(Dispatchers.IO) {
         ensureModel()
         val tess = TessBaseAPI()
         try {
@@ -163,8 +165,19 @@ class ThaiPhotoOcrProvider(private val context: Context) {
             val sparse = recognizeLines(
                 tess, bitmap, TessBaseAPI.PageSegMode.PSM_SPARSE_TEXT, 25f
             )
-            val merged = ThaiPhotoLinePolicy.merge(auto, sparse)
-            val trusted = merged.filter { line ->
+            val firstPass = ThaiPhotoLinePolicy.merge(auto, sparse)
+            val recoveryRegions = ThaiPhotoLinePolicy.recoveryRegions(
+                firstPass.filter { it.confidence >= .55f }, bitmap.width, bitmap.height)
+            val recovered = recoveryRegions.flatMap { region ->
+                // The gap can contain pale-blue Thai headlines; the final
+                // tail may contain pale lettering inside a red date ribbon.
+                listOf(false, true).mapNotNull { ribbon ->
+                    recognizeRecoveryLine(tess, bitmap, region, ribbon)
+                }
+            }
+            val merged = ThaiPhotoLinePolicy.merge(auto + recovered, sparse)
+            val withDates = ThaiPhotoLinePolicy.attachLatinDateRanges(merged, latinDateHints)
+            val trusted = withDates.filter { line ->
                 line.confidence >= .55f ||
                     (line.confidence >= .36f &&
                         ThaiPhotoLinePolicy.corroborated(line, auto, sparse)) ||
@@ -174,6 +187,8 @@ class ThaiPhotoOcrProvider(private val context: Context) {
             com.example.cameratranslator.core.DiagnosticLog.record(
                 "THAI_OCR", "AUTO候選=" + auto.size +
                     "；SPARSE候選=" + sparse.size +
+                    "；局部重辨區域=" + recoveryRegions.size +
+                    "；局部候選=" + recovered.size +
                     "；去重合併=" + merged.size +
                     "；信心通過=" + trusted.size
             )
@@ -190,6 +205,140 @@ class ThaiPhotoOcrProvider(private val context: Context) {
             }
         } finally {
             tess.recycle()
+        }
+    }
+
+    /**
+     * Re-scan only bands inferred from trusted Thai lines. Strong local
+     * contrast restores pale-blue titles and reverse-contrast date ribbons.
+     * Keep candidates only when the Thai model actually recognizes words.
+     */
+    private fun recognizeRecoveryLine(
+        tess: TessBaseAPI,
+        original: Bitmap,
+        region: ThaiPhotoLinePolicy.RecoveryRegion,
+        ribbon: Boolean
+    ): ThaiPhotoLinePolicy.Line? {
+        val width = region.right - region.left
+        val height = region.bottom - region.top
+        if (width < 50 || height < 24) return null
+        val pixels = IntArray(width * height)
+        original.getPixels(pixels, 0, width, region.left, region.top, width, height)
+        val output = IntArray(pixels.size) { android.graphics.Color.WHITE }
+        if (ribbon) {
+            // Restrict inverse-contrast processing to a substantial red
+            // ribbon. Do not invert the light poster background or toolbar.
+            val counts = IntArray(height)
+            for (y in 0 until height) for (x in 0 until width) {
+                val px = pixels[y * width + x]
+                val red = android.graphics.Color.red(px)
+                val green = android.graphics.Color.green(px)
+                val blue = android.graphics.Color.blue(px)
+                if (red > 135 && red > green * 1.45f &&
+                    red > blue * 1.12f) {
+                    counts[y]++
+                }
+            }
+            val peak = counts.maxOrNull() ?: 0
+            if (peak < width * .17f) return null
+            val rows = (0 until height).filter { counts[it] >= peak * .55f }
+            if (rows.size < 5) return null
+            // Ignore isolated red decorations at the far side of the
+            // poster. The actual banner occupies a continuous x-range
+            // through many selected rows, not one stray colored pixel.
+            val columnCounts = IntArray(width)
+            for (y in rows) for (x in 0 until width) {
+                val px = pixels[y * width + x]
+                val red = android.graphics.Color.red(px)
+                val green = android.graphics.Color.green(px)
+                val blue = android.graphics.Color.blue(px)
+                if (red > 135 && red > green * 1.45f &&
+                    red > blue * 1.12f) columnCounts[x]++
+            }
+            val columnThreshold = rows.size * .25f
+            var runStart = -1
+            var bestStart = -1
+            var bestEnd = -1
+            for (x in 0..width) {
+                val qualifies = x < width && columnCounts[x] >= columnThreshold
+                if (qualifies && runStart < 0) runStart = x
+                if (!qualifies && runStart >= 0) {
+                    if (x - runStart > bestEnd - bestStart) {
+                        bestStart = runStart
+                        bestEnd = x
+                    }
+                    runStart = -1
+                }
+            }
+            if (bestStart < 0 || bestEnd - bestStart < width * .15f) return null
+            val x1 = (bestStart - 3).coerceAtLeast(0)
+            val x2 = (bestEnd + 3).coerceAtMost(width - 1)
+            val y1 = (rows.first() - 2).coerceAtLeast(0)
+            val y2 = (rows.last() + 2).coerceAtMost(height - 1)
+            for (y in y1..y2) for (x in x1..x2) {
+                val px = pixels[y * width + x]
+                val brightness = (android.graphics.Color.red(px) * .299f +
+                    android.graphics.Color.green(px) * .587f +
+                    android.graphics.Color.blue(px) * .114f)
+                output[y * width + x] =
+                    if (brightness >= 166f) android.graphics.Color.BLACK
+                    else android.graphics.Color.WHITE
+            }
+        } else {
+            // Threshold relative to the observed pale background.
+            val sampled = pixels.filterIndexed { index, _ ->
+                (index / width) % 3 == 0 && (index % width) % 4 == 0
+            }.map { px ->
+                (android.graphics.Color.red(px) * .299f +
+                    android.graphics.Color.green(px) * .587f +
+                    android.graphics.Color.blue(px) * .114f).toInt()
+            }.sorted()
+            val background = sampled.getOrElse(sampled.size * 9 / 10) { 225 }
+            val threshold = (background - 24).coerceIn(120, 230)
+            for (i in pixels.indices) {
+                val px = pixels[i]
+                val brightness = (android.graphics.Color.red(px) * .299f +
+                    android.graphics.Color.green(px) * .587f +
+                    android.graphics.Color.blue(px) * .114f)
+                output[i] = if (brightness < threshold) android.graphics.Color.BLACK
+                    else android.graphics.Color.WHITE
+            }
+        }
+        val base = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val upscaled: Bitmap
+        try {
+            base.setPixels(output, 0, width, 0, 0, width, height)
+            upscaled = Bitmap.createScaledBitmap(base, width * 2, height * 2, false)
+        } finally {
+            base.recycle()
+        }
+        try {
+            tess.setPageSegMode(TessBaseAPI.PageSegMode.PSM_SINGLE_LINE)
+            tess.setImage(upscaled)
+            tess.getUTF8Text()
+            val iterator = tess.getResultIterator() ?: return null
+            try {
+                iterator.begin()
+                val level = TessBaseAPI.PageIteratorLevel.RIL_TEXTLINE
+                val value = iterator.getUTF8Text(level)?.trim().orEmpty()
+                val box = iterator.getBoundingRect(level) ?: return null
+                val confidence = (iterator.confidence(level) / 100f).coerceIn(0f, 1f)
+                if (confidence < .55f ||
+                    !ThaiPhotoLinePolicy.plausible(value) || box.isEmpty) return null
+                val left = region.left + box.left / 2
+                val top = region.top + box.top / 2
+                val right = region.left + (box.right + 1) / 2
+                val bottom = region.top + (box.bottom + 1) / 2
+                if (left !in 0 until original.width ||
+                    top !in 0 until original.height ||
+                    right > original.width || bottom > original.height ||
+                    right - left < 12 || bottom - top < 10) return null
+                return ThaiPhotoLinePolicy.Line(value, left, top, right, bottom, confidence)
+            } finally {
+                iterator.delete()
+            }
+        } finally {
+            upscaled.recycle()
         }
     }
 

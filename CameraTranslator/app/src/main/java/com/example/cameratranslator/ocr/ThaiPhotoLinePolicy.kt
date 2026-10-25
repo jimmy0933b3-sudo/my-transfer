@@ -84,6 +84,89 @@ internal object ThaiPhotoLinePolicy {
         return 1f - prev[second.length] / max(first.length, second.length).toFloat() >= .68f
     }
 
+    /**
+     * The same Thai printed headline can have very different strings in AUTO
+     * and SPARSE (diacritics and character segmentation). Matching literal
+     * OCR text alone leaves duplicated overlapping translations.
+     *
+     * Require near containment AND an identical baseline/left edge so two
+     * genuinely separate adjacent lines are never collapsed by geometry.
+     */
+    private fun sameVisualLine(a: Line, b: Line): Boolean {
+        val minHeight = min(a.height, b.height).coerceAtLeast(1)
+        val minWidth = min(a.width, b.width).coerceAtLeast(1)
+        val longer = max(normalized(a.text).length, normalized(b.text).length)
+        val shorter = min(normalized(a.text).length, normalized(b.text).length)
+        return overlap(a, b) >= .88f &&
+            kotlin.math.abs(a.top - b.top) <= minHeight * .23f &&
+            kotlin.math.abs(a.left - b.left) <= minWidth * .12f &&
+            kotlin.math.abs((a.top + a.bottom) - (b.top + b.bottom)) <=
+                max(a.height, b.height) * .42f &&
+            shorter >= 4 && longer <= shorter * 1.45f
+    }
+
+    data class RecoveryRegion(val left: Int, val top: Int, val right: Int, val bottom: Int)
+
+    /**
+     * Re-scan ONLY plausible missing headline/date bands, not arbitrary
+     * poster areas or the browser toolbar. Regions are image-coordinate based.
+     */
+    fun recoveryRegions(lines: List<Line>, width: Int, height: Int): List<RecoveryRegion> {
+        if (lines.isEmpty() || width < 120 || height < 200) return emptyList()
+        val ordered = lines.sortedWith(compareBy<Line> { it.top }.thenBy { it.left })
+        val regions = mutableListOf<RecoveryRegion>()
+        for (i in 0 until ordered.lastIndex) {
+            val upper = ordered[i]
+            val lower = ordered[i + 1]
+            val gap = lower.top - upper.bottom
+            val minHeight = min(upper.height, lower.height).coerceAtLeast(1)
+            val sharedX = min(upper.right, lower.right) - max(upper.left, lower.left)
+            if (gap < max(20, minHeight / 4) ||
+                gap > max(160, minHeight * 2) ||
+                sharedX < min(upper.width, lower.width) * .3f) continue
+            val top = (upper.bottom + 4).coerceIn(0, height)
+            val bottom = (lower.top - 4).coerceIn(0, height)
+            if (bottom - top >= 20) {
+                regions.add(RecoveryRegion(0, top, width, bottom))
+            }
+        }
+        // A festival poster often has its date ribbon beneath the last
+        // recognized line. Search a short tail, not the rest of the image.
+        val last = ordered.last()
+        val tailTop = (last.bottom + 6).coerceIn(0, height)
+        val tailBottom = (last.bottom + max(145, last.height * 2)).coerceIn(0, height)
+        if (tailBottom - tailTop >= 28) {
+            regions.add(RecoveryRegion(0, tailTop, width, tailBottom))
+        }
+        return regions.take(4)
+    }
+
+    /** Latin OCR knows Arabic digits that a Thai-only model may miss. */
+    fun attachLatinDateRanges(
+        thaiLines: List<Line>, latinLines: List<Line>
+    ): List<Line> {
+        val result = thaiLines.toMutableList()
+        for (latin in latinLines.filter { isDateRange(it.text) && it.confidence >= .5f }) {
+            val match = result.indexOfFirst { item ->
+                month.matches(item.text.trim()) &&
+                    min(item.bottom, latin.bottom) - max(item.top, latin.top) >=
+                        min(item.height, latin.height) * .4f &&
+                    item.left >= latin.left &&
+                    item.left - latin.right in -8..max(55, latin.height * 2)
+            }
+            if (match != -1) {
+                val m = result[match]
+                result[match] = Line(
+                    latin.text.trim() + " " + m.text.trim(),
+                    min(latin.left, m.left), min(latin.top, m.top),
+                    max(latin.right, m.right), max(latin.bottom, m.bottom),
+                    min(latin.confidence, m.confidence)
+                )
+            }
+        }
+        return result
+    }
+
     /** Agreement between page-segmentation modes can retain medium-confidence text. */
     fun corroborated(candidate: Line, primary: List<Line>, sparse: List<Line>): Boolean =
         primary.any { overlap(candidate, it) >= .60f &&
@@ -95,10 +178,11 @@ internal object ThaiPhotoLinePolicy {
         val kept = mutableListOf<Line>()
         for (item in (primary + sparse).filter { plausible(it.text) }) {
             val match = kept.indexOfFirst { other ->
-                overlap(item, other) >= .68f && closeText(item.text, other.text)
+                overlap(item, other) >= .68f &&
+                    (closeText(item.text, other.text) || sameVisualLine(item, other))
             }
             if (match == -1) kept.add(item)
-            else if (item.confidence > kept[match].confidence + .06f ||
+            else if (item.confidence > kept[match].confidence + .035f ||
                 (item.confidence >= kept[match].confidence - .04f &&
                     item.text.length > kept[match].text.length + 2)) kept[match] = item
         }
