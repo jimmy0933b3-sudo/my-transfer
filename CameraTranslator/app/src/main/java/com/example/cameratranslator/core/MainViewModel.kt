@@ -729,6 +729,7 @@ class MainViewModel @Inject constructor(
             photoSceneRecognized + "；第二套 OCR 線索=" +
             secondaryPhotoContext.size + "；本次OCR=" + mode)
         var photoGlossaryHits = 0
+        var thaiCalendarAccepted = 0
         var brandPreserved = 0
         var sameLanguagePreserved = 0
         var cloudTranslationAccepted = 0
@@ -747,7 +748,10 @@ class MainViewModel @Inject constructor(
                 block.sourceLanguage != requestedTarget &&
                 !block.ocrReviewNeeded &&
                 !(block.sourceLanguage == "th" &&
-                    com.example.cameratranslator.ocr.ThaiPhotoLinePolicy.isDateRange(original)) &&
+                    (com.example.cameratranslator.ocr.ThaiPhotoLinePolicy.isDateRange(original) ||
+                        (requestedTarget == "zh" &&
+                            com.example.cameratranslator.ocr.ThaiPhotoLinePolicy
+                                .translateCalendarLabel(original) != null))) &&
                 PhotoTranslationQuality.rejectOcr(
                     original, block.sourceLanguage, block.ocrConfidence
                 ) == null &&
@@ -916,15 +920,21 @@ class MainViewModel @Inject constructor(
                 }
                 if (brand) brandPreserved++ else sameLanguagePreserved++
             } else {
-                val corrected = photoGlossary.lookup(
+                val thaiCalendar = if (block.sourceLanguage == "th" &&
+                    requestedTarget == "zh") {
+                    com.example.cameratranslator.ocr.ThaiPhotoLinePolicy
+                        .translateCalendarLabel(original)
+                } else null
+                val corrected = thaiCalendar ?: photoGlossary.lookup(
                     original, block.sourceLanguage, requestedTarget, photoContext
                 )
                 val cloud = if (corrected == null) cloudResults[i] else null
                 ensureCurrentPhoto(requestId)
                 if (corrected != null) {
                     translated = corrected
-                    provider = "詞彙校正（本機）"
-                    photoGlossaryHits++
+                    provider = if (thaiCalendar != null) "泰文日期（本機格式驗證）"
+                        else "詞彙校正（本機）"
+                    if (thaiCalendar == null) photoGlossaryHits++
                 } else if (!cloud.isNullOrBlank()) {
                     translated = cloud
                     provider = "Azure 雲端"
@@ -989,6 +999,7 @@ class MainViewModel @Inject constructor(
             }
             if (!resolved.translated.isNullOrBlank()) {
                 translatedCount++
+                if (resolved.provider.startsWith("泰文日期")) thaiCalendarAccepted++
                 if (resolved.provider == "Azure 雲端") cloudTranslationAccepted++
                 if (resolved.provider.startsWith("ML Kit 離線")) offlineTranslationAccepted++
             }
@@ -1021,6 +1032,7 @@ class MainViewModel @Inject constructor(
             composited.skipReasons.entries.joinToString { it.key + "=" + it.value })
         DiagnosticLog.record("QUALITY", "保留原文=" + rejectedCount +
             "；本機詞彙校正=" + photoGlossaryHits +
+            "；泰文日期驗證譯文=" + thaiCalendarAccepted +
             "；品牌保留=" + brandPreserved +
             "；同語言原文=" + sameLanguagePreserved +
             "；Azure有效譯文=" + cloudTranslationAccepted +
