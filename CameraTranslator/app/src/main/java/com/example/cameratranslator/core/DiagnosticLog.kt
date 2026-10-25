@@ -16,7 +16,7 @@ import java.util.Locale
 object DiagnosticLog {
     private val lock = Any()
     private const val MAX_BYTES = 5_000_000
-    private const val TRIM_CHARS = 4_000_000
+    private const val TRIM_BYTES = 4_000_000
     private var target: File? = null
     @Volatile private var includePhotoText = true
 
@@ -109,9 +109,14 @@ object DiagnosticLog {
                 file.appendText("[" + time + "] [" + category.take(24) +
                     "] " + safe + "\n")
                 if (file.length() > MAX_BYTES) {
-                    val tail = file.readText(Charsets.UTF_8).takeLast(TRIM_CHARS)
+                    // Trim by UTF-8 bytes, not characters. Japanese/Chinese
+                    // text takes multiple bytes and must not grow beyond cap.
+                    val bytes = file.readBytes()
+                    val start = (bytes.size - TRIM_BYTES).coerceAtLeast(0)
+                    val tail = String(bytes, start, bytes.size - start, Charsets.UTF_8)
+                    // Discard a possibly truncated leading record.
                     file.writeText("[較早的 Log 已自動清除]\n" +
-                        tail.substringAfter('\n', tail), Charsets.UTF_8)
+                        tail.substringAfter('\n', ""), Charsets.UTF_8)
                 }
                 Unit
             } catch (error: Exception) {
