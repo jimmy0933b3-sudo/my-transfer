@@ -52,6 +52,35 @@ class PhotoTranslationQualityTest {
             "ダイキャストビークルは全部で10種類！", "寶", "ja", "zh"))
     }
 
+    @Test fun japaneseNegationCannotBecomeUnqualifiedAffirmative() {
+        assertNotNull(PhotoTranslationQuality.rejectTranslation(
+            "手に入らない", "能入手", "ja", "zh"))
+        assertNotNull(PhotoTranslationQuality.rejectTranslation(
+            "この商品は買えません", "這款商品可以購買", "ja", "zh"))
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            "手に入らない", "無法單獨取得", "ja", "zh"))
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            "ギフトパックでしか手に入らない", "只能透過禮盒取得", "ja", "zh"))
+        // Negative suffix must not match the middle of an unrelated word.
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            "ないしょの道具", "秘密道具", "ja", "zh"))
+    }
+
+    @Test fun numericalChangesAreCaughtWithoutRejectingLegitimateFormatting() {
+        assertNotNull(PhotoTranslationQuality.rejectTranslation(
+            "全部で10種類", "總共有 11 種", "ja", "zh"))
+        assertNotNull(PhotoTranslationQuality.rejectTranslation(
+            "ver.1.6.27", "版本 1.6.28", "en", "zh"))
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            "全部で10種類", "共有 10 種", "ja", "zh"))
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            "2026年10月", "2026 年 10 月", "ja", "zh"))
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            "価格 1,200 円", "價格 1200 元", "ja", "zh"))
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            "全部で10種類", "總共有十種", "ja", "zh"))
+    }
+
     @Test fun lowConfidenceShortOcrNoiseIsNotPaintedOrSentToAzure() {
         assertNotNull(PhotoTranslationQuality.rejectOcr("Dh", "en", 0.40f))
         assertNotNull(PhotoTranslationQuality.rejectOcr("Hんてi", "ja", 0.32f))
