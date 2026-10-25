@@ -21,6 +21,17 @@ class PhotoNumericEvidenceTest {
         assertTrue(PhotoNumericEvidence.mismatched("ver.1.6.29", "版本1.6.30"))
     }
 
+    @Test fun thaiSongkranDateKeepsCorrectMonthAndDays() {
+        assertFalse(PhotoNumericEvidence.mismatched(
+            "13-15 เมษายน", "4月13日至15日"))
+        assertFalse(PhotoNumericEvidence.mismatched(
+            "13–15 เมษายน", "四月十三日至十五日"))
+        assertTrue(PhotoNumericEvidence.mismatched(
+            "13–15 เมษายน", "4月13日至16日"))
+        assertTrue(PhotoNumericEvidence.mismatched(
+            "13–15 เมษายน", "5月13日至15日"))
+    }
+
     @Test fun noNumericEvidenceDoesNotEraseTranslation() {
         assertFalse(PhotoNumericEvidence.mismatched("コレクションシート", "收藏清單"))
         assertFalse(PhotoNumericEvidence.mismatched("10種類", "總共有許多種類"))

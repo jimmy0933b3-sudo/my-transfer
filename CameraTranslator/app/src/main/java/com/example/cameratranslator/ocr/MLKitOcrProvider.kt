@@ -54,7 +54,37 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
 
     suspend fun recognizeTextFromBitmap(bitmap: Bitmap, selectedSource: String): List<TextElement> {
         require(PhotoOcrLanguages.supported(selectedSource)) { "Unsupported photo OCR language" }
-        if (selectedSource == "th") return mergePhotoParagraphs(thai.recognize(bitmap))
+        if (selectedSource == "th") {
+            val thaiLines = thai.recognize(bitmap)
+            // Tesseract trained only on Thai can hallucinate Thai glyphs over
+            // browser URL bars in screenshots. Independently detect definite
+            // Latin URLs and veto ONLY OCR rectangles sharing that URL area.
+            // Never discard real Thai headlines based on a generic Latin OCR
+            // guess, watermark, or arbitrary screen position.
+            val urls = read(latin, InputImage.fromBitmap(bitmap, 0), "en")
+                .mapNotNull { item ->
+                    val box = item.boundingBox ?: return@mapNotNull null
+                    if (!ThaiPhotoLinePolicy.isBrowserUrl(item.originalText))
+                        return@mapNotNull null
+                    ThaiPhotoLinePolicy.Line(
+                        item.originalText, box.left, box.top,
+                        box.right, box.bottom, 1f
+                    )
+                }
+            val safeLines = thaiLines.filterNot { item ->
+                val rect = item.boundingBox ?: return@filterNot false
+                val candidate = ThaiPhotoLinePolicy.Line(
+                    item.originalText, rect.left, rect.top,
+                    rect.right, rect.bottom, item.ocrConfidence ?: 0f
+                )
+                urls.any { ThaiPhotoLinePolicy.masksThaiLine(candidate, it) }
+            }
+            com.example.cameratranslator.core.DiagnosticLog.record(
+                "THAI_OCR", "拉丁網址證據=" + urls.size +
+                    "；網址區域誤辨排除=" + (thaiLines.size - safeLines.size)
+            )
+            return mergePhotoParagraphs(safeLines)
+        }
         val mlKit = mergePhotoParagraphs(
             extract(InputImage.fromBitmap(bitmap, 0), selectedSource).map {
                 it.copy(imageWidth = bitmap.width, imageHeight = bitmap.height)
