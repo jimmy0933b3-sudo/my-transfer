@@ -195,6 +195,13 @@ class PhotoTranslationGlossaryTest {
             "รูVุมVนกระชับ", "th", "en"))
     }
 
+    @Test fun missingThaiToneMarkNeedsIndependentSkincareEvidence() {
+        assertEquals("肝斑、雀斑", PhotoTranslationGlossary.builtin(
+            "ฝา กระ", "th", "zh", listOf("จุดดาวดา", "ฝา กระ")))
+        assertNull(PhotoTranslationGlossary.builtin(
+            "ฝา กระ", "th", "zh", listOf("ฝา กระ")))
+    }
+
     @Test fun englishMaskSenseNeedsPhotoContext() {
         assertEquals("面膜",
             PhotoTranslationGlossary.builtin(
