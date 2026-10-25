@@ -91,7 +91,10 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
                 "THAI_OCR", "拉丁網址證據=" + urls.size +
                     "；網址區域誤辨排除=" + (thaiLines.size - safeLines.size)
             )
-            return mergePhotoParagraphs(safeLines)
+            // Thai page-segmentation already yields printed lines. Joining them
+            // again across nearby baselines turns three poster headings into
+            // one giant rectangle and destroys the correct paint geometry.
+            return safeLines
         }
         val mlKit = mergePhotoParagraphs(
             extract(InputImage.fromBitmap(bitmap, 0), selectedSource).map {
