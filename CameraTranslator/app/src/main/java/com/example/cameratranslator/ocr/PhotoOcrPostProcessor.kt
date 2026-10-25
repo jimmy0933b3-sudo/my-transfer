@@ -47,7 +47,8 @@ internal object PhotoOcrPostProcessor {
             // Search backwards for nearby stacked blocks, not only the last
             // item: multiple columns on the same row may be interleaved.
             val matchIndex = merged.indices.reversed().firstOrNull {
-                canMerge(merged[it], next)
+                canMerge(merged[it], next) &&
+                    !hasInterveningLine(merged[it], next, ordered)
             }
             if (matchIndex == null) {
                 merged.add(next.copy(text = clean(next.text, next.language)))
@@ -66,6 +67,29 @@ internal object PhotoOcrPostProcessor {
             )
         }
         return merged.sortedWith(compareBy<Segment> { it.top }.thenBy { it.left })
+    }
+
+    /**
+     * On crowded Japanese product sheets a tilted label can have one line
+     * printed BETWEEN two other OCR boxes. Never join a first and third
+     * line across the intervening content into one tall erasure rectangle.
+     */
+    private fun hasInterveningLine(
+        first: Segment, last: Segment, all: List<Segment>
+    ): Boolean {
+        if (first.language != "ja") return false
+        return all.any { other ->
+            if (other === last || other.originalIndices.all {
+                    it in first.originalIndices
+                } || other.language != "ja" ||
+                other.top <= first.top || other.top >= last.top ||
+                other.bottom <= first.bottom) false
+            else {
+                val overlap = max(0, min(first.right, other.right) -
+                    max(first.left, other.left))
+                overlap >= min(first.width, other.width) * .45f
+            }
+        }
     }
 
     private fun clean(text: String, language: String): String =
