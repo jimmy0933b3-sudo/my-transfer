@@ -599,14 +599,29 @@ class MainViewModel @Inject constructor(
                     "；相似度=" + (decision?.similarity?.let {
                         String.format(java.util.Locale.US, "%.2f", it)
                     } ?: "無") +
+                    "；判定原因=" + (decision?.reason ?: "unknown") +
+                    "；IoU=" + (decision?.intersectionOverUnion?.let {
+                        String.format(java.util.Locale.US, "%.2f", it)
+                    } ?: "無") +
                     "；改用第二套=" + (action == PhotoJapaneseOcrConsensus.Action.REPLACE))
                 changed
+            }
+            val lowAgreementCount = raw.indices.count { idx ->
+                val box = raw[idx].boundingBox ?: return@count false
+                val d = PhotoJapaneseOcrConsensus.evaluate(
+                    PhotoJapaneseOcrConsensus.Block(raw[idx].originalText,
+                        box.left, box.top, box.right, box.bottom, raw[idx].ocrConfidence),
+                    alternateBlocks
+                )
+                d.reason == "disagreement_unverified"
             }
             DiagnosticLog.record("OCR_CHECK", "雙引擎日文交叉比對耗時=" +
                 (SystemClock.elapsedRealtime() - checkStart) + "ms" +
                 "；Paddle=" + raw.size + "；MLKit=" + alternate.size +
                 "；對應比對=" + independentMatches +
-                "；採用MLKit=" + alternateReadings + "；待人工確認=" + reviewNeeded)
+                "；採用MLKit=" + alternateReadings +
+                "；無法證實的差異=" + lowAgreementCount +
+                "；待人工確認=" + reviewNeeded)
             checked
         } else {
             raw.onEachIndexed { index, item ->

@@ -17,6 +17,17 @@ class PhotoTranslationGlossaryTest {
         assertNull(PhotoTranslationGlossary.builtin("Playbooks", "en", "zh"))
     }
 
+    @Test fun JapaneseToySheetTitlesHaveAccurateChineseNames() {
+        assertEquals("收藏清單",
+            PhotoTranslationGlossary.builtin("コレクションシート", "ja", "zh"))
+        assertEquals("禮盒限定配色小車",
+            PhotoTranslationGlossary.builtin("ギフトパック限定カラービークル！", "ja", "zh"))
+        assertEquals("合金小車",
+            PhotoTranslationGlossary.builtin("ダイキャストビークル", "ja", "zh"))
+        assertNull(PhotoTranslationGlossary.builtin(
+            "ギフトパック限定カラービークルは特別です", "ja", "zh"))
+    }
+
     @Test fun userCorrectionKeyIsStableAcrossCase() {
         assertEquals(
             PhotoTranslationGlossary.key("Playbook", "en", "zh"),

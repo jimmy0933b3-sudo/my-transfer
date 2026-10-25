@@ -47,7 +47,8 @@ internal object PhotoOcrPostProcessor {
             // Search backwards for nearby stacked blocks, not only the last
             // item: multiple columns on the same row may be interleaved.
             val matchIndex = merged.indices.reversed().firstOrNull {
-                canMerge(merged[it], next)
+                canMerge(merged[it], next) &&
+                    !hasInterveningLine(merged[it], next, ordered)
             }
             if (matchIndex == null) {
                 merged.add(next.copy(text = clean(next.text, next.language)))
@@ -66,6 +67,29 @@ internal object PhotoOcrPostProcessor {
             )
         }
         return merged.sortedWith(compareBy<Segment> { it.top }.thenBy { it.left })
+    }
+
+    /**
+     * On crowded Japanese product sheets a tilted label can have one line
+     * printed BETWEEN two other OCR boxes. Never join a first and third
+     * line across the intervening content into one tall erasure rectangle.
+     */
+    private fun hasInterveningLine(
+        first: Segment, last: Segment, all: List<Segment>
+    ): Boolean {
+        if (first.language != "ja") return false
+        return all.any { other ->
+            if (other === last || other.originalIndices.all {
+                    it in first.originalIndices
+                } || other.language != "ja" ||
+                other.top <= first.top || other.top >= last.top ||
+                other.bottom <= first.bottom) false
+            else {
+                val overlap = max(0, min(first.right, other.right) -
+                    max(first.left, other.left))
+                overlap >= min(first.width, other.width) * .45f
+            }
+        }
     }
 
     private fun clean(text: String, language: String): String =
@@ -90,12 +114,21 @@ internal object PhotoOcrPostProcessor {
 
         val gap = b.top - a.bottom
         val lineHeight = min(a.lineHeight, b.lineHeight).coerceAtLeast(1f)
-        if (gap < -lineHeight * 0.40f || gap > max(7f, lineHeight * 1.1f)) return false
+        if (a.language == "ja") {
+            // Ruby (furigana), diagonal headlines and two printed rows may
+            // physically overlap. Combining those rectangles erases their
+            // independent text during rendering. Only join clearly separated
+            // consecutive baselines with similar printed font size.
+            if (gap < 0f || gap > max(6f, lineHeight * .55f)) return false
+            if (max(a.lineHeight, b.lineHeight) / lineHeight > 1.24f) return false
+        } else if (gap < -lineHeight * 0.40f ||
+            gap > max(7f, lineHeight * 1.1f)) return false
 
         val horizontalOverlap = max(0, min(a.right, b.right) - max(a.left, b.left))
         val minWidth = min(a.width, b.width).coerceAtLeast(1)
         val centersAligned = abs(a.centerX - b.centerX) <= max(a.width, b.width) * 0.28f
-        if (horizontalOverlap < minWidth * 0.40f || !centersAligned) return false
+        if (horizontalOverlap < minWidth * (if (a.language == "ja") .58f else .40f) ||
+            !centersAligned) return false
 
         // Blocks with wildly different text scale are usually different
         // labels (e.g. product name above a tiny legal disclaimer).

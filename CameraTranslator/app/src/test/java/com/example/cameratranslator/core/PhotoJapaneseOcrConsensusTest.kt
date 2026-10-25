@@ -9,40 +9,66 @@ class PhotoJapaneseOcrConsensusTest {
     ) = PhotoJapaneseOcrConsensus.Block(text, x, y, x + w, y + h, confidence)
 
     @Test fun matchingReadersKeepPaddle() {
-        val p = block("集めたらチェックを入れよう", .38f)
         val decision = PhotoJapaneseOcrConsensus.evaluate(
-            p, listOf(block("集めたらチェックを入れよう"))
+            block("集めたらチェックを入れよう", .92f),
+            listOf(block("集めたらチェックを入れよう"))
         )
         assertEquals(PhotoJapaneseOcrConsensus.Action.KEEP, decision.action)
         assertEquals(1f, decision.similarity!!, .001f)
+        assertEquals("readings_agree", decision.reason)
     }
 
-    @Test fun weakPaddleUsesIndependentValidJapanese() {
+    @Test fun strongPaddleDisagreementDoesNotBlockPhotoTranslation() {
+        // The actual toy leaflet had 8 high-confidence Japanese blocks
+        // rejected because ML Kit often includes ruby/adjacent text.
         val decision = PhotoJapaneseOcrConsensus.evaluate(
-            block("食べたらチェックを入れよう", .30f),
+            block("食べたらチェックを入れよう", .91f),
             listOf(block("集めたらシートに記入しよう"))
         )
-        assertEquals(PhotoJapaneseOcrConsensus.Action.REPLACE, decision.action)
-        assertEquals("集めたらシートに記入しよう", decision.alternate!!.text)
+        assertEquals(PhotoJapaneseOcrConsensus.Action.KEEP, decision.action)
+        assertEquals("disagreement_unverified", decision.reason)
     }
 
-    @Test fun strongDisagreementFlagsManualReviewRatherThanGuessing() {
+    @Test fun moderateConfidenceDisagreementKeepsPaddleAndLogsIt() {
         val decision = PhotoJapaneseOcrConsensus.evaluate(
-            block("食べたらチェックを入れよう", .92f),
+            block("食べたらチェックを入れよう", .53f),
+            listOf(block("集めたらシートに記入しよう"))
+        )
+        assertEquals(PhotoJapaneseOcrConsensus.Action.KEEP, decision.action)
+    }
+
+    @Test fun veryWeakPaddleLargeDisagreementRequiresReview() {
+        val decision = PhotoJapaneseOcrConsensus.evaluate(
+            block("食べたらチェックを入れよう", .28f),
             listOf(block("集めたらシートに記入しよう"))
         )
         assertEquals(PhotoJapaneseOcrConsensus.Action.REVIEW, decision.action)
     }
 
-    @Test fun unrelatedOrOversizedNearbyTextDoesNotOverwrite() {
+    @Test fun veryWeakPaddleMinorTypoCanUseIndependentReader() {
+        val decision = PhotoJapaneseOcrConsensus.evaluate(
+            block("集めたらチェックを入れよら", .28f),
+            listOf(block("集めたらチェックを入れよう"))
+        )
+        assertEquals(PhotoJapaneseOcrConsensus.Action.REPLACE, decision.action)
+    }
+
+    @Test fun subLineRubyMustNotBeMatchedWithLargerMainText() {
+        val decision = PhotoJapaneseOcrConsensus.evaluate(
+            block("ダイキャストビークルは全部で10種類", .91f,
+                750, 420, 540, 100),
+            listOf(block("キミは全部集められるかな", x = 1000, y = 432,
+                w = 230, h = 46))
+        )
+        assertEquals(PhotoJapaneseOcrConsensus.Action.KEEP, decision.action)
+        assertEquals("no_aligned_match", decision.reason)
+    }
+
+    @Test fun distantTextDoesNotCountAsAgreement() {
         val p = block("集めたらチェックを入れよう", .3f)
         assertEquals(PhotoJapaneseOcrConsensus.Action.KEEP,
             PhotoJapaneseOcrConsensus.evaluate(p, listOf(
                 block("違う文字がいっぱい", x = 400)
-            )).action)
-        assertEquals(PhotoJapaneseOcrConsensus.Action.KEEP,
-            PhotoJapaneseOcrConsensus.evaluate(p, listOf(
-                block("あいうえおかきくけこさしすせそたちつてとなにぬねのほら")
             )).action)
     }
 
