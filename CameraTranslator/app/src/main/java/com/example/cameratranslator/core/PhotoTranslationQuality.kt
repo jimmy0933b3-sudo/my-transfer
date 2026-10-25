@@ -1,6 +1,5 @@
 package com.example.cameratranslator.core
 
-import java.text.Normalizer
 import java.util.Locale
 
 /**
@@ -16,24 +15,10 @@ internal object PhotoTranslationQuality {
     private val kana = Regex("[\u3040-\u30ff]")
     private val han = Regex("[\u3400-\u9fff]")
     private val thai = Regex("[\u0e00-\u0e7f]")
-    // Only independently printed numerals are reliable. Paddle may misread
-    // the Japanese で10 as Latin debris such as Gi0 or C10. Treating the
-    // trailing 0 as a verified quantity rejected the correct "10 種" output.
-    // Guard both sides so regex cannot match the last digit of "Gi10".
-    private val numericToken = Regex("(?<![A-Za-z0-9])\\d+(?:[.,]\\d+)*(?![A-Za-z0-9])")
-    private val thousandsSeparator = Regex(",(?=\\d{3}(?:\\D|$))")
     // Surface-form checks are not proof that a translation is semantically correct.
     private val japaneseNegativeEnding =
         Regex("(?:ない|なかった|ません(?:でした)?|ず)(?=$|[\\s、。！？!?])")
     private val chineseNegativeOrRestrictive = Regex("[不無无沒没未非勿別免禁難只僅唯限缺拒失]")
-
-    private fun numbers(text: String): List<String> {
-        val normalized = Normalizer.normalize(text, Normalizer.Form.NFKC)
-        return numericToken.findAll(normalized)
-            .map { it.value.replace(thousandsSeparator, "") }
-            .sorted().toList()
-    }
-
 
     fun rejectOcr(
         original: String, source: String, confidence: Float? = null
@@ -97,9 +82,7 @@ internal object PhotoTranslationQuality {
         // Compare Arabic numerals only when both sides still use numerals.
         // Chinese number words may be legitimate, so avoid speculative rejection.
         if (source != target) {
-            val before = numbers(input)
-            val after = numbers(output)
-            if (before.isNotEmpty() && after.isNotEmpty() && before != after) {
+            if (PhotoNumericEvidence.mismatched(input, output)) {
                 return "原文與譯文的數字不一致"
             }
         }

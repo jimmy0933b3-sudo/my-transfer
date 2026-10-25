@@ -71,10 +71,79 @@ internal object PhotoJapaneseOcrConsensus {
         return 1f - previous[b.length] / max(a.length, b.length).toFloat()
     }
 
+
+    /**
+     * ML Kit may split one Paddle text line into two adjacent blocks.
+     * Build geometric reading candidates only for horizontal, same-row
+     * neighbors. Synthetic readings are supporting evidence, not independent
+     * votes, and must pass the same similarity / confidence safety gates.
+     */
+    private fun joinedSameRow(paddle: Block, blocks: List<Block>): List<Block> {
+        val eligible = blocks.filter { scriptValid(it.text) && it.bottom > paddle.top &&
+            it.top < paddle.bottom }
+        val joined = mutableListOf<Block>()
+        for (a in eligible) for (b in eligible) {
+            if (a === b || a.left >= b.left) continue
+            val vertical = min(a.bottom, b.bottom) - max(a.top, b.top)
+            val minHeight = min(a.bottom - a.top, b.bottom - b.top).coerceAtLeast(1)
+            val gap = b.left - a.right
+            if (vertical.toFloat() / minHeight < .68f ||
+                gap < -8 || gap > max(22, (paddle.right - paddle.left) / 8)) continue
+            val combined = Block(
+                a.text.trimEnd() + b.text.trimStart(),
+                a.left, min(a.top, b.top), b.right, max(a.bottom, b.bottom)
+            )
+            if (scriptValid(combined.text) &&
+                intersectionOverUnion(paddle, combined) >= .48f) joined.add(combined)
+        }
+        return joined
+    }
+
+    /**
+     * ML Kit also groups several Japanese lines into one large paragraph.
+     * An enclosing paragraph can corroborate a contained Paddle line, but
+     * MUST NOT replace its text or coordinates: ML Kit's reading also
+     * contains other lines and sometimes furigana.
+     */
+    private fun paragraphEvidence(paddle: Block, blocks: List<Block>): Decision? {
+        val original = norm(paddle.text)
+        if (original.length < 5) return null
+        return blocks.asSequence().filter { scriptValid(it.text) }
+            .filter { norm(it.text).length >= original.length * 1.6f }
+            .mapNotNull { parent ->
+                val w = min(parent.right, paddle.right) - max(parent.left, paddle.left)
+                val h = min(parent.bottom, paddle.bottom) - max(parent.top, paddle.top)
+                val paddleArea = (paddle.right - paddle.left).coerceAtLeast(1).toLong() *
+                    (paddle.bottom - paddle.top).coerceAtLeast(1)
+                if (w <= 0 || h <= 0 || w.toLong() * h / paddleArea.toFloat() < .72f) {
+                    return@mapNotNull null
+                }
+                val full = norm(parent.text)
+                // A matching substring is strong evidence, but a random
+                // short common phrase in a nearby paragraph is not.
+                val score = if (full.contains(original)) 1f else {
+                    var best = 0f
+                    for (length in (original.length - 2).coerceAtLeast(5)..
+                        min(full.length, original.length + 2)) {
+                        for (start in 0..full.length - length) {
+                            best = max(best, similarity(original,
+                                full.substring(start, start + length)))
+                        }
+                    }
+                    best
+                }
+                if (score >= .90f) Decision(
+                    Action.KEEP, score, parent,
+                    "parent_paragraph_corroboration",
+                    intersectionOverUnion(paddle, parent)
+                ) else null
+            }.maxByOrNull { it.similarity ?: 0f }
+    }
+
     fun evaluate(paddle: Block, mlkit: List<Block>): Decision {
         if (!scriptValid(paddle.text)) return Decision(Action.KEEP, reason = "not_japanese")
         val original = norm(paddle.text)
-        val candidates = mlkit.asSequence()
+        val candidates = (mlkit + joinedSameRow(paddle, mlkit)).asSequence()
             .filter { scriptValid(it.text) }
             .map { it to intersectionOverUnion(paddle, it) }
             .filter { it.second >= 0.48f }
@@ -85,7 +154,7 @@ internal object PhotoJapaneseOcrConsensus {
             }
             .toList()
         val mostOverlapping = candidates.maxByOrNull { it.second }
-            ?: return Decision(Action.KEEP, reason = "no_aligned_match")
+            ?: return paragraphEvidence(paddle, mlkit) ?: Decision(Action.KEEP, reason = "no_aligned_match")
 
         // A marginally lower-IoU block may be the actual text line, while
         // the highest IoU is ruby or an adjacent annotation. Require BOTH
@@ -120,6 +189,12 @@ internal object PhotoJapaneseOcrConsensus {
                     "low_confidence_close_match", iou)
             }
             return Decision(Action.KEEP, score, alternate, "readings_agree", iou)
+        }
+        // Weak, geometrically aligned but strongly contradictory readings
+        // are unsafe to paint automatically, even if Paddle is not below .42.
+        if (confidence < .65f && score < .35f && iou >= .72f) {
+            return Decision(Action.REVIEW, score, alternate,
+                "moderate_confidence_severe_disagreement", iou)
         }
         // OCR disagreements are not proof of error. On this toy collection
         // sheet, 7-8 confident Japanese vehicle names were incorrectly
