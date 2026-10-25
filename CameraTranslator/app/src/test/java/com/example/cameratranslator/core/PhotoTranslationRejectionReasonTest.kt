@@ -29,6 +29,14 @@ class PhotoTranslationRejectionReasonTest {
     }
 
     @Test
+    fun semanticQualityReasonsHavePrivacySafeDiagnosticCodes() {
+        assertEquals("translation_negation_risk", PhotoTranslationRejectionReason.code(
+            "日文否定語意可能在翻譯中消失", "translation"))
+        assertEquals("translation_numeric_mismatch", PhotoTranslationRejectionReason.code(
+            "原文與譯文的數字不一致", "translation"))
+    }
+
+    @Test
     fun unknownReasonsUseFixedFallbacks() {
         assertEquals("ocr_other", PhotoTranslationRejectionReason.code(
             "unknown OCR diagnostic", "ocr"
