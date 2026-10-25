@@ -56,6 +56,63 @@ internal object ThaiPhotoLinePolicy {
         line.width >= 10 && line.height >= 10 && imageWidth > 0 &&
             line.height <= max(50f, imageWidth * .22f)
 
+    // Tesseract confidence alone is not a language-quality score. In the
+    // reported Songkran poster, malformed Thai scored .90 while readable
+    // ประเทศไทย scored .84. Reject glyph soup before it is translated.
+    private val repeatedThaiMarks = Regex("[\\u0e31\\u0e34-\\u0e3a\\u0e47-\\u0e4e]{3,}")
+    private val unsupportedAscii = Regex("[\\\\|\\[\\]{}<>]")
+    private fun noisyThai(text: String): Boolean {
+        if (repeatedThaiMarks.containsMatchIn(text)) return true
+        val marks = text.count { it == '\u0e31' || it in '\u0e34'..'\u0e3a' ||
+            it in '\u0e47'..'\u0e4e' }
+        val consonants = text.count { it in '\u0e01'..'\u0e2e' }
+        if (marks >= 6 && marks > consonants) return true
+        if (unsupportedAscii.findAll(text).count() >= 2) return true
+        return false
+    }
+
+    private fun quality(line: Line): Float {
+        val punctuation = unsupportedAscii.findAll(line.text).count()
+        val startsWithOddMark = line.text.trimStart().firstOrNull()?.let {
+            it in '\u0e47'..'\u0e4e' || it == 'ๆ'
+        } == true
+        return line.confidence - punctuation * .14f -
+            (if (startsWithOddMark) .14f else 0f) -
+            (if (noisyThai(line.text)) .5f else 0f)
+    }
+
+    /** Compare independent recognition models without duplicating boxes. */
+    fun combineIndependent(
+        tesseract: List<Line>, paddle: List<Line>
+    ): List<Line> {
+        val result = tesseract.filter { plausible(it.text) }.toMutableList()
+        var newlyFound = 0
+        var replaced = 0
+        for (candidate in paddle.filter { plausible(it.text) && it.confidence >= .55f }) {
+            val match = result.indexOfFirst {
+                overlap(it, candidate) >= .60f &&
+                    (sameVisualLine(it, candidate) || closeText(it.text, candidate.text))
+            }
+            if (match >= 0) {
+                // Independently trained Paddle can correct plausible but wrong
+                // Tesseract glyphs. Never replace good text with bad glyphs.
+                if (quality(candidate) >= quality(result[match]) - .06f) {
+                    result[match] = candidate
+                    replaced++
+                }
+            } else if (result.none { overlap(it, candidate) >= .75f }) {
+                result.add(candidate)
+                newlyFound++
+            }
+        }
+        com.example.cameratranslator.core.DiagnosticLog.record(
+            "THAI_CROSSCHECK", "Tesseract=" + tesseract.size +
+                "；Paddle=" + paddle.size + "；採用Paddle=" + replaced +
+                "；補充文字=" + newlyFound + "；輸出=" + result.size
+        )
+        return result.sortedWith(compareBy<Line> { it.top }.thenBy { it.left })
+    }
+
     private val latinUrl = Regex(
         """(?i)(?:https?://|(?:[a-z0-9-]+\.)+(?:com|net|org|co|tw|io|app)(?:/|$))"""
     )
@@ -73,7 +130,8 @@ internal object ThaiPhotoLinePolicy {
         val consonants = text.count { it in '\u0e01'..'\u0e2e' }
         val thai = text.count { it in '\u0e01'..'\u0e5b' }
         val letters = text.count(Char::isLetter)
-        return consonants >= 2 && thai >= 3 && thai * 2 >= letters
+        return consonants >= 2 && thai >= 3 && thai * 2 >= letters &&
+            !noisyThai(text)
     }
 
     private fun intersection(a: Line, b: Line): Long =
@@ -212,9 +270,10 @@ internal object ThaiPhotoLinePolicy {
                     (closeText(item.text, other.text) || sameVisualLine(item, other))
             }
             if (match == -1) kept.add(item)
-            else if (item.confidence > kept[match].confidence + .035f ||
-                (item.confidence >= kept[match].confidence - .04f &&
-                    item.text.length > kept[match].text.length + 2)) kept[match] = item
+            else if (quality(item) > quality(kept[match]) + .035f ||
+                (quality(item) >= quality(kept[match]) - .04f &&
+                    item.text.length > kept[match].text.length + 2 &&
+                    !noisyThai(item.text))) kept[match] = item
         }
         return joinDates(kept.sortedWith(compareBy<Line> { it.top }.thenBy { it.left }))
     }
