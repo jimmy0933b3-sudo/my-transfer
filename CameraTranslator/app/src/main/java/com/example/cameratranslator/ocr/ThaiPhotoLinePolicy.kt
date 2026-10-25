@@ -81,7 +81,8 @@ internal object ThaiPhotoLinePolicy {
     // ประเทศไทย scored .84. Reject glyph soup before it is translated.
     private val repeatedThaiMarks = Regex("[\\u0e31\\u0e34-\\u0e3a\\u0e47-\\u0e4e]{3,}")
     private fun noisyThai(text: String): Boolean {
-        if (repeatedThaiMarks.containsMatchIn(text)) return true
+        if (repeatedThaiMarks.containsMatchIn(text) ||
+            Regex("""\s{5,}""").containsMatchIn(text)) return true
         val marks = text.count { it == '\u0e31' || it in '\u0e34'..'\u0e3a' ||
             it in '\u0e47'..'\u0e4e' }
         val consonants = text.count { it in '\u0e01'..'\u0e2e' }
