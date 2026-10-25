@@ -693,6 +693,10 @@ class MainViewModel @Inject constructor(
             qualityReasonCounts[code] = (qualityReasonCounts[code] ?: 0) + 1
         }
         val translateStart = SystemClock.elapsedRealtime()
+        // Match ambiguous OCR errors only when the same photo contains the
+        // independent collection-sheet and series labels.
+        val photoContext = selected.map { it.originalText.trim() }
+        var photoGlossaryHits = 0
         // Azure translates up to 48 eligible OCR blocks in six-item batches.
         // This improves coverage beyond the old 18-block cap without allowing
         // unusually dense photos to create unbounded cloud usage.
@@ -708,7 +712,9 @@ class MainViewModel @Inject constructor(
                 !block.ocrReviewNeeded &&
                 PhotoTranslationQuality.rejectOcr(original, block.sourceLanguage) == null &&
                 !PhotoBrandPolicy.shouldPreserve(original, block.sourceLanguage, requestedSource) &&
-                photoGlossary.lookup(original, block.sourceLanguage, requestedTarget) == null
+                photoGlossary.lookup(
+                    original, block.sourceLanguage, requestedTarget, photoContext
+                ) == null
         }.take(48) else emptyList()
         if (cloudEligible.isNotEmpty()) {
             val credential = cloudCredentials.load().orEmpty()
@@ -862,13 +868,14 @@ class MainViewModel @Inject constructor(
                 provider = if (brand) "品牌名稱保留原文" else "相同語言原文"
             } else {
                 val corrected = photoGlossary.lookup(
-                    original, block.sourceLanguage, requestedTarget
+                    original, block.sourceLanguage, requestedTarget, photoContext
                 )
                 val cloud = if (corrected == null) cloudResults[i] else null
                 ensureCurrentPhoto(requestId)
                 if (corrected != null) {
                     translated = corrected
                     provider = "詞彙校正（本機）"
+                    photoGlossaryHits++
                 } else if (!cloud.isNullOrBlank()) {
                     translated = cloud
                     provider = "Azure 雲端"
@@ -960,6 +967,7 @@ class MainViewModel @Inject constructor(
             "；跳過原因=" +
             composited.skipReasons.entries.joinToString { it.key + "=" + it.value })
         DiagnosticLog.record("QUALITY", "保留原文=" + rejectedCount +
+            "；本機詞彙校正=" + photoGlossaryHits +
             "；原因分類=" +
             qualityReasonCounts.entries.joinToString { it.key + "=" + it.value } +
             "；雲端品質不合格=" + cloudQualityFailedCount +
