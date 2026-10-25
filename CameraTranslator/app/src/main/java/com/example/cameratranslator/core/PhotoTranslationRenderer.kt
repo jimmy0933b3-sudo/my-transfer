@@ -27,55 +27,89 @@ internal object PhotoTranslationRenderer {
         val unchanged: Int = 0
     )
 
-    fun compose(original: Bitmap, lines: List<Pair<TextElement, String>>): Result {
+    private data class Prepared(
+        val index: Int,
+        val element: TextElement,
+        val fullRect: Rect,
+        val layoutRect: Rect,
+        val translatedLines: List<String>,
+        val lineSpacing: Float,
+        val fontSize: Float,
+        val paint: Paint
+    )
+
+    fun compose(
+        original: Bitmap, lines: List<Pair<TextElement, String>>,
+        blockIndices: List<Int> = lines.indices.toList()
+    ): Result {
+        require(blockIndices.size == lines.size) { "Render block index mismatch" }
         val output = original.copy(Bitmap.Config.ARGB_8888, true)
             ?: error("Cannot allocate translated photo")
         val canvas = Canvas(output)
-        var placed = 0
         var skipped = 0
         var unchanged = 0
         val skipReasons = linkedMapOf<String, Int>()
         fun skip(reason: String, index: Int, element: TextElement) {
             skipped++
             skipReasons[reason] = (skipReasons[reason] ?: 0) + 1
-            val bounds = element.boundingBox
             DiagnosticLog.record("PHOTO_RENDER",
-                "編號=" + index + "；結果=跳過；原因=" + reason +
-                "；框=" + (bounds?.toShortString() ?: "無"))
+                "編號=" + blockIndices[index] + "；結果=跳過；原因=" + reason +
+                    "；框=" + (element.boundingBox?.toShortString() ?: "無"))
+            DiagnosticLog.photoResult(blockIndices[index], element.sourceLanguage,
+                element.originalText, null, "RENDER_SKIPPED", "原因=" + reason)
         }
+
+        // Plan ALL possible changed translations together before painting.
+        // The old single-pass occupied-box check discarded valid overlapping
+        // diagonal headline rows and gift-pack sentences from the real photo.
+        val usable = lines.map { (element, translated) ->
+            val box = element.boundingBox
+            if (translated.isBlank() || translated.trim() == element.originalText.trim() ||
+                box == null) return@map null
+            val clipped = Rect(box)
+            if (!clipped.intersect(0, 0, output.width, output.height) ||
+                !isUsableRect(clipped, output.width, output.height)) null
+            else PhotoTextBoxLayout.Box(
+                clipped.left, clipped.top, clipped.right, clipped.bottom)
+        }
+        val layout = PhotoTextBoxLayout.partition(usable)
         val occupied = mutableListOf<Rect>()
-        // Always compose directly into the actual captured Bitmap. No Compose
-        // overlay is added to the exported or shared photo.
+        val prepared = mutableListOf<Prepared>()
+        var partitionsUsed = 0
         for ((index, item) in lines.withIndex()) {
             val (element, translated) = item
-            val box = element.boundingBox
             if (translated.isBlank()) continue
             if (translated.trim() == element.originalText.trim()) {
                 unchanged++
                 DiagnosticLog.record("PHOTO_RENDER",
-                    "編號=" + index + "；結果=同原文不須替換")
+                    "編號=" + blockIndices[index] + "；結果=同原文不須替換")
+                DiagnosticLog.photoResult(blockIndices[index], element.sourceLanguage,
+                    element.originalText, translated, "RENDER_UNCHANGED", "與原文相同")
                 continue
             }
-            if (box == null) {
+            val bounds = element.boundingBox
+            if (bounds == null) {
                 skip("沒有文字座標", index, element)
                 continue
             }
-            val rect = Rect(box)
-            if (!rect.intersect(0, 0, output.width, output.height) ||
-                !isUsableRect(rect, output.width, output.height)) {
+            val fullRect = Rect(bounds)
+            if (!fullRect.intersect(0, 0, output.width, output.height) ||
+                !isUsableRect(fullRect, output.width, output.height)) {
                 skip("無效文字座標", index, element)
                 continue
             }
-            // OCR engines can produce overlapping line and block boxes.
-            // Replacing both would erase the first translation with the
-            // second block's background reconstruction.
-            if (occupied.any { painted -> overlapFraction(rect, painted) > 0.23f }) {
+            val planned = layout.getOrNull(index)
+            val rect = if (planned != null)
+                Rect(planned.left, planned.top, planned.right, planned.bottom)
+            else Rect(fullRect)
+            if (!isUsableRect(rect, output.width, output.height) ||
+                occupied.any { painted -> overlapFraction(rect, painted) > .23f }) {
                 skip("文字區塊重疊", index, element)
                 continue
             }
-            val pixelColor = nearbyBackgroundColor(original, rect)
-            val inkColor = estimateInkColor(original, rect, pixelColor)
-            val pad = (min(rect.width(), rect.height()) * 0.055f).coerceIn(2f, 12f)
+            val pixelColor = nearbyBackgroundColor(original, fullRect)
+            val inkColor = estimateInkColor(original, fullRect, pixelColor)
+            val pad = (min(rect.width(), rect.height()) * .055f).coerceIn(2f, 12f)
             val availableWidth = rect.width() - 2 * pad
             val availableHeight = rect.height() - 2 * pad
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -85,8 +119,6 @@ internal object PhotoTranslationRenderer {
             }
             var chosenLines: List<String>? = null
             var lineSpacing = 0f
-            // Use the photo's ORIGINAL pixel coordinates: a 70px cap made
-            // four Chinese characters tiny inside 200px-tall product titles.
             var fontSize = PhotoRenderSizing.initialFontSize(availableHeight)
             val maxLines = PhotoRenderSizing.lineLimit(element.originalText)
             val minimumFont = PhotoRenderSizing.minimumFontSize(availableHeight)
@@ -108,31 +140,50 @@ internal object PhotoTranslationRenderer {
                 skip("翻譯字數超出文字框", index, element)
                 continue
             }
-            // Erase the original glyphs from the image pixels *before*
-            // drawing the new glyphs at those exact bitmap coordinates.
-            eraseTextRegion(output, original, rect)
-            val overallHeight = chosenLines.size * lineSpacing
+            occupied.add(Rect(rect))
+            if (rect != fullRect) partitionsUsed++
+            prepared.add(Prepared(index, element, fullRect, rect,
+                chosenLines, lineSpacing, fontSize, paint))
+        }
+
+        // Erase ALL accepted source rectangles first. Erasing per line AFTER
+        // drawing the previous line destroyed already translated text in
+        // overlapping OCR boxes; the original bitmap remains the sampler.
+        prepared.forEach { eraseTextRegion(output, original, it.fullRect) }
+        for (item in prepared) {
+            val rect = item.layoutRect
+            val paint = item.paint
+            paint.textSize = item.fontSize
+            val overallHeight = item.translatedLines.size * item.lineSpacing
             val startY = rect.top + (rect.height() - overallHeight) / 2f +
-                fontSize * 0.89f
+                item.fontSize * .89f
             canvas.save()
             canvas.clipRect(rect)
-            chosenLines.forEachIndexed { i, line ->
+            item.translatedLines.forEachIndexed { i, line ->
                 canvas.drawText(
                     line,
                     rect.left + (rect.width() - paint.measureText(line)) / 2f,
-                    startY + i * lineSpacing,
-                    paint
-                )
+                    startY + i * item.lineSpacing, paint)
             }
             canvas.restore()
-            occupied.add(Rect(rect))
-            placed++
             DiagnosticLog.record("PHOTO_RENDER",
-                "編號=" + index + "；結果=成功；框=" + rect.toShortString() +
-                "；行數=" + chosenLines.size + "；字級=" +
-                fontSize.toInt())
+                "編號=" + blockIndices[item.index] + "；結果=成功；框=" +
+                    item.fullRect.toShortString() +
+                    "；排版框=" + rect.toShortString() +
+                    "；重疊分區=" + (item.fullRect != rect) +
+                    "；行數=" + item.translatedLines.size +
+                    "；字級=" + item.fontSize.toInt())
+            DiagnosticLog.photoResult(blockIndices[item.index], item.element.sourceLanguage,
+                item.element.originalText, lines[item.index].second,
+                "RENDER_PAINTED", "原文框=" + item.fullRect.toShortString() +
+                    "；排版框=" + rect.toShortString() +
+                    "；行數=" + item.translatedLines.size +
+                    "；字級=" + item.fontSize.toInt())
         }
-        return Result(output, placed, skipped, skipReasons, unchanged)
+        DiagnosticLog.record("RENDER_LAYOUT",
+            "可畫段數=" + prepared.size + "；重疊重新分區=" + partitionsUsed +
+            "；因重疊保留原文=" + (skipReasons["文字區塊重疊"] ?: 0))
+        return Result(output, prepared.size, skipped, skipReasons, unchanged)
     }
 
     fun isUsableRect(rect: Rect, width: Int, height: Int): Boolean {

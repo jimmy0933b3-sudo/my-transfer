@@ -15,8 +15,8 @@ import java.util.Locale
  */
 object DiagnosticLog {
     private val lock = Any()
-    private const val MAX_BYTES = 320_000
-    private const val TRIM_CHARS = 215_000
+    private const val MAX_BYTES = 1_500_000
+    private const val TRIM_CHARS = 1_000_000
     private var target: File? = null
     @Volatile private var includePhotoText = false
 
@@ -46,6 +46,32 @@ object DiagnosticLog {
         record("PHOTO_BLOCK", "階段=" + stage.take(24) + "；編號=" + index +
             "；語言=" + language + "；字數=" + count +
             "；" + info.take(400) + visible)
+    }
+
+
+    /**
+     * Correlates a block's OCR INPUT to its RESULT with a stable context index.
+     * [info] MUST contain only non-sensitive metrics and category IDs.
+     * Text is redacted unless the user enables detailed diagnostics.
+     * Unlike photoBlock, a single record shows before and after side-by-side.
+     */
+    fun photoResult(
+        index: Int, language: String, original: String, translated: String?,
+        stage: String, info: String
+    ) {
+        val originalCount = original.codePointCount(0, original.length)
+        val resultCount = translated?.codePointCount(0, translated.length) ?: 0
+        val content = if (includePhotoText) {
+            fun excerpt(value: String) = value.replace("\n", "\\n")
+                .replace("\r", "\\r").replace("\t", " ").take(650)
+            "；OCR原文=" + excerpt(original) +
+                "；最終結果=" + (translated?.let(::excerpt) ?: "無（保留原文）")
+        } else "；OCR原文=隱藏（需設定同意）；最終結果=隱藏（需設定同意）"
+        record("PHOTO_RESULT", "階段=" + stage.take(32) +
+            "；編號=" + index + "；語言=" + language.take(8) +
+            "；原文字數=" + originalCount +
+            "；結果字數=" + resultCount +
+            "；" + info.take(320) + content)
     }
 
 

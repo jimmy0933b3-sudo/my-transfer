@@ -294,14 +294,13 @@ class MainViewModel @Inject constructor(
             }
             _snapshotLines.value = current
             val composed = withContext(Dispatchers.Default) {
-                PhotoTranslationRenderer.compose(
-                    image,
-                    capturedSnapshotElements.mapIndexedNotNull { i, element ->
-                        current.getOrNull(i)?.translated?.takeIf(String::isNotBlank)?.let {
-                            element to it
-                        }
+                val indexed = capturedSnapshotElements.mapIndexedNotNull { i, element ->
+                    current.getOrNull(i)?.translated?.takeIf(String::isNotBlank)?.let {
+                        i to (element to it)
                     }
-                )
+                }
+                PhotoTranslationRenderer.compose(image,
+                    indexed.map { it.second }, indexed.map { it.first })
             }
             if (_snapshotOriginalPhoto.value !== image) return@launch
             _snapshotTranslatedPhoto.value = composed.bitmap
@@ -531,6 +530,15 @@ class MainViewModel @Inject constructor(
                 DiagnosticLog.record("OCR_CHECK",
                     "第二套日文 OCR 發生異常，維持 Paddle 辨識", e)
                 emptyList()
+            }
+            // Log every independent OCR candidate, not only candidates that
+            // managed to align with Paddle. Otherwise missing/misaligned
+            // readings cannot be diagnosed from the exported report.
+            alternate.forEachIndexed { otherIndex, other ->
+                DiagnosticLog.photoBlock("OCR_MLKIT_ALL", otherIndex,
+                    other.sourceLanguage, other.originalText,
+                    "座標=" + (other.boundingBox?.toShortString() ?: "無") +
+                        "；信心=" + (other.ocrConfidence?.toString() ?: "無"))
             }
             val alternateBlocks = alternate.mapNotNull { other ->
                 val rect = other.boundingBox ?: return@mapNotNull null
@@ -834,6 +842,9 @@ class MainViewModel @Inject constructor(
                     translated = null, provider = "保留原字：" + ocrProblem
                 )
                 _snapshotLines.value = result.toList()
+                DiagnosticLog.photoResult(i, block.sourceLanguage, original, null,
+                    "OCR_REJECTED", "原因=" +
+                        PhotoTranslationRejectionReason.code(ocrProblem, "ocr"))
                 continue
             }
             // Product trademarks should not turn into strange
@@ -907,6 +918,10 @@ class MainViewModel @Inject constructor(
                 "；雲端品質不合格=" + resolved.cloudQualityFailed +
                 "；離線重試=" + resolved.offlineAttempted +
                 "；離線救回=" + resolved.recovered)
+            DiagnosticLog.photoResult(i, block.sourceLanguage, original,
+                resolved.translated, "TRANSLATION_CHECKED",
+                "來源=" + resolved.provider.substringBefore("：").take(32) +
+                    "；狀態=" + outcome)
             if (resolved.cloudQualityFailed) cloudQualityFailedCount++
             if (resolved.offlineAttempted) offlineFallbackAttempted++
             if (resolved.recovered) offlineFallbackRecovered++
@@ -928,14 +943,13 @@ class MainViewModel @Inject constructor(
         _snapshotStatus.value = "正在將譯文畫回照片原本的位置…"
         val renderStart = SystemClock.elapsedRealtime()
         val composited = withContext(Dispatchers.Default) {
-            PhotoTranslationRenderer.compose(
-                bitmap,
-                selected.mapIndexedNotNull { index, element ->
-                    val translation = result[index].translated
-                    if (translation.isNullOrBlank()) null
-                    else element to translation
+            val indexed = selected.mapIndexedNotNull { index, element ->
+                result[index].translated?.takeIf(String::isNotBlank)?.let {
+                    index to (element to it)
                 }
-            )
+            }
+            PhotoTranslationRenderer.compose(bitmap,
+                indexed.map { it.second }, indexed.map { it.first })
         }
         ensureCurrentPhoto(requestId)
         _snapshotTranslatedPhoto.value = composited.bitmap
