@@ -690,8 +690,12 @@ class MainViewModel @Inject constructor(
         val selected = contextual.filter {
             !it.originalText.isBlank() && it.originalText.length > 1
         }.map { element ->
-            val cleaned = PhotoPosterTextPolicy.normalizeEnglishTime(
+            val clockNormalized = PhotoPosterTextPolicy.normalizeEnglishTime(
                 element.originalText, element.sourceLanguage
+            )
+            val cleaned = PhotoEnglishPosterSemantics.normalize(
+                clockNormalized, element.sourceLanguage,
+                contextual.map { it.originalText }
             )
             if (cleaned != element.originalText) {
                 DiagnosticLog.record("OCR_CONTEXT", "英文時間字型混淆已校正")
@@ -761,10 +765,17 @@ class MainViewModel @Inject constructor(
                 selected[index].sourceLanguage, photoContext
             )
         }.toSet()
-        val preserveOriginal = graphicProtected + literalProtected
+        val evidenceBrands = selected.indices.filter { i ->
+            selected[i].sourceLanguage == "en" &&
+                PhotoEnglishPosterSemantics.hasBrandEvidence(
+                    selected[i].originalText, photoContext
+                )
+        }.toSet()
+        val preserveOriginal = graphicProtected + literalProtected + evidenceBrands
         DiagnosticLog.record("OCR_CONTEXT",
             "設計重疊標題保留=" + graphicProtected.size +
-            "；佔位文字及網址保留=" + literalProtected.size)
+            "；佔位文字及網址保留=" + literalProtected.size +
+            "；獨立證據確認品牌=" + evidenceBrands.size)
         var photoGlossaryHits = 0
         var thaiCalendarAccepted = 0
         var brandPreserved = 0
@@ -794,6 +805,9 @@ class MainViewModel @Inject constructor(
                     original, block.sourceLanguage, block.ocrConfidence
                 ) == null &&
                 !PhotoBrandPolicy.shouldPreserve(original, block.sourceLanguage, requestedSource) &&
+                PhotoEnglishPosterSemantics.translate(
+                    original, block.sourceLanguage, requestedTarget, photoContext
+                ) == null &&
                 photoGlossary.lookup(
                     original, block.sourceLanguage, requestedTarget, photoContext
                 ) == null
@@ -965,7 +979,9 @@ class MainViewModel @Inject constructor(
                     com.example.cameratranslator.ocr.ThaiPhotoLinePolicy
                         .translateCalendarLabel(original)
                 } else null
-                val corrected = thaiCalendar ?: photoGlossary.lookup(
+                val corrected = thaiCalendar ?: PhotoEnglishPosterSemantics.translate(
+                    original, block.sourceLanguage, requestedTarget, photoContext
+                ) ?: photoGlossary.lookup(
                     original, block.sourceLanguage, requestedTarget, photoContext
                 )
                 val cloud = if (corrected == null) cloudResults[i] else null
