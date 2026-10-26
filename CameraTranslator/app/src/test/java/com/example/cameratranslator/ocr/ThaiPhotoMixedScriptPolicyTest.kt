@@ -61,4 +61,27 @@ class ThaiPhotoMixedScriptPolicyTest {
             listOf(english("Gold", 190, 354, 294, 394))
         ))
     }
+
+    @Test fun validatedEventDateSurvivesEnglishRatioAndSuppressesThaiDateGibberish() {
+        val date = english("22-23 NOV 2019/ 3: PM - 8:30 PM",
+            163, 783, 527, 808, .9395837f)
+        assertFalse(ThaiPhotoMixedScriptPolicy.reliableEnglish(
+            date.text, date.confidence))
+        assertTrue(ThaiPhotoMixedScriptPolicy.reliableEnglishCandidate(date))
+        assertEquals(listOf(date), ThaiPhotoMixedScriptPolicy.groupEnglish(listOf(date)))
+        assertTrue(ThaiPhotoMixedScriptPolicy.isLatinHallucination(
+            english("22-23 พอห 2019/ 3: 9ห - 8.30 9",
+                167, 785, 524, 806, .78765756f), listOf(date)))
+    }
+
+    @Test fun rotatedStockWatermarkIsNotTranslatedOrPainted() {
+        assertFalse(ThaiPhotoMixedScriptPolicy.reliableEnglishCandidate(
+            english("pngtee", 542, 207, 673, 339, .8987743f)))
+        assertFalse(ThaiPhotoMixedScriptPolicy.reliableEnglishCandidate(
+            english("ongtree", 208, 1121, 332, 1248, .9515047f)))
+        assertTrue(ThaiPhotoMixedScriptPolicy.reliableEnglishCandidate(
+            english("Himalaya", 87, 254, 476, 350, .97420835f)))
+        assertTrue(ThaiPhotoMixedScriptPolicy.reliableEnglishCandidate(
+            english("LOGO", 15, 253, 114, 290, .9965491f)))
+    }
 }

@@ -230,4 +230,41 @@ class ThaiPhotoLinePolicyTest {
         assertEquals(listOf(trusted),
             ThaiPhotoLinePolicy.combineIndependent(listOf(trusted), listOf(wrong)))
     }
+
+    @Test fun realNewYearPosterRemovesNestedHeadlineFragmentsNotSeparateLines() {
+        val title = line("สวัสดีปีให้ม่", 61, 406, 567, 162, .9475662f)
+        val inner = line("สุด1?  ปีใ อ", 210, 419, 260, 140, .78793305f)
+        val tail = line("นผู! อัง", 487, 494, 112, 53, .7397742f)
+        val caption = line("หมืนคนใส่โคมไฟบนท้องฟ้า",
+            198, 666, 296, 25, .9545118f)
+        assertEquals(listOf(title, caption),
+            ThaiPhotoLinePolicy.suppressNestedThaiFragments(
+                listOf(title, inner, tail, caption)))
+    }
+
+    @Test fun keepLegitimateNeighboringOrEquallyReliableOverlappingThaiCaptions() {
+        val first = line("สวัสดีปีใหม่", 61, 406, 567, 162, .94f)
+        val nearby = line("ประเทศไทย", 210, 570, 260, 40, .70f)
+        val strongInner = line("ความสุข", 210, 419, 260, 140, .91f)
+        assertEquals(3, ThaiPhotoLinePolicy.suppressNestedThaiFragments(
+            listOf(first, nearby, strongInner)).size)
+    }
+
+    @Test fun englishDateFromNewYearPosterSurvivesMalformedThaiDigitGuess() {
+        assertEquals("2019年11月22日至23日，下午3時至8時30分",
+            ThaiPhotoLinePolicy.translateEnglishEventDate(
+                "22-23 NOV 2019/ 3: PM - 8:30 PM"))
+        assertEquals("2019年11月22日至23日，下午3時至8時30分",
+            ThaiPhotoLinePolicy.translateEnglishEventDate(
+                "22-23 NOV 2019 / 3 PM - 8:30 PM"))
+        assertEquals("2026年4月13日至15日，上午9時15分至下午5時",
+            ThaiPhotoLinePolicy.translateEnglishEventDate(
+                "13-15 APR 2026 / 9:15 AM - 5 PM"))
+        assertNull(ThaiPhotoLinePolicy.translateEnglishEventDate(
+            "22-23 FOO 2019/ 3: PM - 8:30 PM"))
+        assertNull(ThaiPhotoLinePolicy.translateEnglishEventDate(
+            "22-33 NOV 2019/ 3: PM - 8:30 PM"))
+        assertNull(ThaiPhotoLinePolicy.translateEnglishEventDate(
+            "22-23 NOV 2019/ 3 PM"))
+    }
 }

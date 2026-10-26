@@ -248,4 +248,18 @@ class PhotoTranslationGlossaryTest {
             "Himalaya", "en", "en",
             listOf("Himalaya", "Secret Gold Overnight", "Mask")))
     }
+
+    @Test fun posterUsesCompleteCantoneseGreetingNotNonsenseLiteralTranslation() {
+        assertEquals("幸運錦鯉，恭喜發財",
+            PhotoTranslationGlossary.builtin(
+                "LUCKY KOI, KUNG HEIFAT CHO1", "en", "zh"))
+        assertEquals("幸運錦鯉，恭喜發財",
+            PhotoTranslationGlossary.builtin(
+                "LUCKY KOI, KUNG HEI FAT CHOI", "en", "zh"))
+        assertNull(PhotoTranslationGlossary.builtin(
+            "KUNG HEIGHT CHO1", "en", "zh"))
+        assertEquals("2019年11月22日至23日，下午3時至8時30分",
+            PhotoTranslationGlossary.builtin(
+                "22-23 NOV 2019/ 3: PM - 8:30 PM", "en", "zh"))
+    }
 }

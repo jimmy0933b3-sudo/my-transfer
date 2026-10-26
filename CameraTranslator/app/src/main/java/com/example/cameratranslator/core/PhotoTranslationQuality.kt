@@ -53,6 +53,15 @@ internal object PhotoTranslationQuality {
         if (source == "th" && !thai.containsMatchIn(value) &&
             !com.example.cameratranslator.ocr.ThaiPhotoLinePolicy.isDateRange(value))
             return "無法確認泰文字元"
+        // Low-confidence mixed Thai + digits can be browser/footer OCR
+        // debris. Do not publish fabricated names and product numbers.
+        // Verified date ranges and calendar labels remain eligible.
+        if (source == "th" && confidence != null && confidence < .65f &&
+            value.count { it.isDigit() } >= 2 &&
+            !com.example.cameratranslator.ocr.ThaiPhotoLinePolicy.isDateRange(value) &&
+            !com.example.cameratranslator.ocr.ThaiPhotoLinePolicy.isCalendarLabel(value)) {
+            return "混合泰文與數字的辨識信心不足"
+        }
         if (source == "en" && !Regex("[A-Za-z]").containsMatchIn(value)) {
             return "無法確認英文文字"
         }
@@ -63,7 +72,8 @@ internal object PhotoTranslationQuality {
         original: String,
         translated: String,
         source: String,
-        target: String
+        target: String,
+        trustedLatinWords: Set<String> = emptySet()
     ): String? {
         val input = original.trim()
         val output = translated.trim()
@@ -84,7 +94,10 @@ internal object PhotoTranslationQuality {
         // Compare Arabic numerals only when both sides still use numerals.
         // Chinese number words may be legitimate, so avoid speculative rejection.
         if (source != target) {
-            if (PhotoNumericEvidence.mismatched(input, output)) {
+            if (PhotoNumericEvidence.mismatched(input, output) &&
+                !(source == "en" && target == "zh" &&
+                    com.example.cameratranslator.ocr.ThaiPhotoLinePolicy
+                        .translateEnglishEventDate(input) == output)) {
                 return "原文與譯文的數字不一致"
             }
         }
@@ -102,7 +115,7 @@ internal object PhotoTranslationQuality {
                 .map { it.value.lowercase(Locale.ROOT) }.toSet()
             val unexplainedWords = latinWords.findAll(output)
                 .map { it.value.lowercase(Locale.ROOT) }
-                .filterNot { it in inputWords }.toList()
+                .filterNot { it in inputWords || it in trustedLatinWords }.toList()
             if (unexplainedWords.isNotEmpty()) {
                 return "譯文含原文沒有的英文片段：" + unexplainedWords.take(2).joinToString()
             }

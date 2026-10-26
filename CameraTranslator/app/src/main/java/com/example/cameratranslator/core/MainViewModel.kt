@@ -969,7 +969,21 @@ class MainViewModel @Inject constructor(
                 target = requestedTarget,
                 translation = translated,
                 provider = provider,
-                offlineReady = translator.isReadyFor(block.sourceLanguage, requestedTarget)
+                offlineReady = translator.isReadyFor(block.sourceLanguage, requestedTarget),
+                // A Thai-local glossary entry may retain a Latin brand or
+                // collection name ONLY when it was independently detected as
+                // legible English in the same photo. The cloud path does not
+                // receive this exemption.
+                trustedLatinWords = if (provider == "詞彙校正（本機）") {
+                    selected.filter {
+                        it.sourceLanguage == "en" &&
+                            (it.ocrConfidence ?: 0f) >= .89f
+                    }.flatMap {
+                        Regex("[A-Za-z]{3,}").findAll(it.originalText)
+                            .map { match -> match.value.lowercase(java.util.Locale.ROOT) }
+                            .toList()
+                    }.toSet()
+                } else emptySet()
             ) {
                 translator.translate(
                     original.take(1500), block.sourceLanguage, requestedTarget

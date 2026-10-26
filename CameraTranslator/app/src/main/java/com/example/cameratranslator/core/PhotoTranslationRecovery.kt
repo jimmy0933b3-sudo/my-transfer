@@ -25,6 +25,7 @@ internal object PhotoTranslationRecovery {
         translation: String?,
         provider: String,
         offlineReady: Boolean,
+        trustedLatinWords: Set<String> = emptySet(),
         translateOffline: suspend () -> String?
     ): Result {
         val rejection = translation?.let { candidate ->
@@ -38,7 +39,10 @@ internal object PhotoTranslationRecovery {
                 (source in setOf("en", "th") ||
                     (source == "ja" && candidate.any { it in '\u3040'..'\u30ff' }))
             if (untranslatedEcho) "譯文與原文相同，疑似未翻譯"
-            else PhotoTranslationQuality.rejectTranslation(original, candidate, source, target)
+            else PhotoTranslationQuality.rejectTranslation(
+                original, candidate, source, target,
+                if (provider == "詞彙校正（本機）") trustedLatinWords else emptySet()
+            )
         }
         if (rejection == null) {
             return Result(translation, provider)
