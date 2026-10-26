@@ -53,6 +53,15 @@ internal object PhotoTranslationQuality {
         if (source == "th" && !thai.containsMatchIn(value) &&
             !com.example.cameratranslator.ocr.ThaiPhotoLinePolicy.isDateRange(value))
             return "無法確認泰文字元"
+        // Low-confidence mixed Thai + digits can be browser/footer OCR
+        // debris. Do not publish fabricated names and product numbers.
+        // Verified date ranges and calendar labels remain eligible.
+        if (source == "th" && confidence != null && confidence < .65f &&
+            value.count { it.isDigit() } >= 2 &&
+            !com.example.cameratranslator.ocr.ThaiPhotoLinePolicy.isDateRange(value) &&
+            !com.example.cameratranslator.ocr.ThaiPhotoLinePolicy.isCalendarLabel(value)) {
+            return "混合泰文與數字的辨識信心不足"
+        }
         if (source == "en" && !Regex("[A-Za-z]").containsMatchIn(value)) {
             return "無法確認英文文字"
         }
