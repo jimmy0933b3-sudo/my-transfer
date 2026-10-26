@@ -89,6 +89,12 @@ internal object PhotoTranslationGlossary {
             // numeric-heavy OCR line through machine translation.
             com.example.cameratranslator.ocr.ThaiPhotoLinePolicy
                 .translateEnglishEventDate(original)?.let { return it }
+            // Common Cantonese New Year greeting. OCR often merges
+            // "HEI FAT" or reads terminal I as 1; accept only the complete
+            // phrase, never arbitrary English words that resemble it.
+            if (key.matches(Regex(
+                """^lucky\\s+koi,?\\s*kung\\s*hei\\s*fat\\s*cho[i1]$"""
+            ))) return "幸運錦鯉，恭喜發財"
             // "Himalaya" is a brand printed repeatedly with a product series.
             // Without independent package evidence, keep the ordinary cloud
             // translation (e.g. geography) rather than guessing a brand.
