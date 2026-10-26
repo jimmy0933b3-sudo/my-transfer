@@ -338,7 +338,10 @@ class MainViewModel @Inject constructor(
                     element.boundingBox, source.height
                 ),
                 imageWidth = source.height,
-                imageHeight = source.width
+                imageHeight = source.width,
+                textQuad = element.textQuad?.let {
+                    PhotoBitmapRotation.clockwise(it, source.height)
+                }
             )
         }
         _snapshotOriginalPhoto.value = turnedSource

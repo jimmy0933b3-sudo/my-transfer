@@ -81,6 +81,17 @@ class PhotoTranslationQualityTest {
             "全部で10種類", "總共有十種", "ja", "zh"))
     }
 
+    @Test fun englishDollarAdvertisementCannotLoseAmount() {
+        assertNotNull(PhotoTranslationQuality.rejectTranslation(
+            "Save $150 + FREE Shipping!", "領取優惠並享免運費", "en", "zh"))
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            "Save $150 + FREE Shipping!", "省下 $150，另享免運費！", "en", "zh"))
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            "Save $150", "省下一百五十美元", "en", "zh"))
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            "ราคา 150 บาท", "價格優惠", "th", "zh"))
+    }
+
     @Test fun ocrLatinDebrisMustNotBeMisreadAsARealQuantity() {
         // PP-OCRv5 has produced Latin-looking Japanese number fragments on
         // the collection sheet. The photographed text says ten varieties.
