@@ -4,9 +4,11 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.Typeface
 import com.example.cameratranslator.core.models.TextElement
+import com.example.cameratranslator.core.models.OcrPoint
 import kotlin.math.max
 import kotlin.math.min
 
@@ -35,7 +37,8 @@ internal object PhotoTranslationRenderer {
         val translatedLines: List<String>,
         val lineSpacing: Float,
         val fontSize: Float,
-        val paint: Paint
+        val paint: Paint,
+        val skewedQuad: List<OcrPoint>? = null
     )
 
     fun compose(
@@ -74,6 +77,7 @@ internal object PhotoTranslationRenderer {
         }
         val layout = PhotoTextBoxLayout.partition(usable)
         val occupied = mutableListOf<Rect>()
+        val occupiedPolygons = mutableListOf<List<OcrPoint>>()
         val prepared = mutableListOf<Prepared>()
         var partitionsUsed = 0
         for ((index, item) in lines.withIndex()) {
@@ -98,20 +102,34 @@ internal object PhotoTranslationRenderer {
                 skip("無效文字座標", index, element)
                 continue
             }
-            val planned = layout.getOrNull(index)
+            // Paddle supplies a tight rotated quadrilateral. The old
+            // horizontal layout erased neighboring diagonal rows even when
+            // the actual printed glyphs never intersected.
+            val rotatedQuad = element.textQuad?.takeIf {
+                PhotoQuadGeometry.eligible(it)
+            }
+            val planned = if (rotatedQuad == null) layout.getOrNull(index) else null
             val rect = if (planned != null)
                 Rect(planned.left, planned.top, planned.right, planned.bottom)
             else Rect(fullRect)
+            val polygon = rotatedQuad ?: PhotoQuadGeometry.rectangle(
+                rect.left, rect.top, rect.right, rect.bottom)
             if (!isUsableRect(rect, output.width, output.height) ||
-                occupied.any { painted -> overlapFraction(rect, painted) > .23f }) {
+                occupiedPolygons.any { painted ->
+                    PhotoQuadGeometry.overlapFraction(polygon, painted) > .23f
+                }) {
                 skip("文字區塊重疊", index, element)
                 continue
             }
             val pixelColor = nearbyBackgroundColor(original, fullRect)
             val inkColor = estimateInkColor(original, fullRect, pixelColor)
-            val pad = (min(rect.width(), rect.height()) * .055f).coerceIn(2f, 12f)
-            val availableWidth = rect.width() - 2 * pad
-            val availableHeight = rect.height() - 2 * pad
+            val actualWidth = rotatedQuad?.let(PhotoQuadGeometry::lineWidth)
+                ?: rect.width().toFloat()
+            val actualHeight = rotatedQuad?.let(PhotoQuadGeometry::lineHeight)
+                ?: rect.height().toFloat()
+            val pad = (min(actualWidth, actualHeight) * .055f).coerceIn(2f, 12f)
+            val availableWidth = actualWidth - 2 * pad
+            val availableHeight = actualHeight - 2 * pad
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = inkColor
                 typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
@@ -141,28 +159,41 @@ internal object PhotoTranslationRenderer {
                 continue
             }
             occupied.add(Rect(rect))
+            occupiedPolygons += polygon
             if (rect != fullRect) partitionsUsed++
             prepared.add(Prepared(index, element, fullRect, rect,
-                chosenLines, lineSpacing, fontSize, paint))
+                chosenLines, lineSpacing, fontSize, paint, rotatedQuad))
         }
 
         // Erase ALL accepted source rectangles first. Erasing per line AFTER
         // drawing the previous line destroyed already translated text in
         // overlapping OCR boxes; the original bitmap remains the sampler.
-        prepared.forEach { eraseTextRegion(output, original, it.fullRect) }
+        prepared.forEach {
+            if (it.skewedQuad != null)
+                eraseSkewedTextRegion(output, original, it.skewedQuad)
+            else eraseTextRegion(output, original, it.fullRect)
+        }
         for (item in prepared) {
             val rect = item.layoutRect
             val paint = item.paint
             paint.textSize = item.fontSize
             val overallHeight = item.translatedLines.size * item.lineSpacing
-            val startY = rect.top + (rect.height() - overallHeight) / 2f +
-                item.fontSize * .89f
             canvas.save()
-            canvas.clipRect(rect)
+            val quad = item.skewedQuad
+            val width = quad?.let(PhotoQuadGeometry::lineWidth) ?: rect.width().toFloat()
+            val height = quad?.let(PhotoQuadGeometry::lineHeight) ?: rect.height().toFloat()
+            if (quad != null) {
+                canvas.clipPath(quadPath(quad))
+                canvas.translate(quad[0].x, quad[0].y)
+                canvas.rotate(PhotoQuadGeometry.angleDegrees(quad))
+            } else {
+                canvas.clipRect(rect)
+                canvas.translate(rect.left.toFloat(), rect.top.toFloat())
+            }
+            val startY = (height - overallHeight) / 2f + item.fontSize * .89f
             item.translatedLines.forEachIndexed { i, line ->
                 canvas.drawText(
-                    line,
-                    rect.left + (rect.width() - paint.measureText(line)) / 2f,
+                    line, (width - paint.measureText(line)) / 2f,
                     startY + i * item.lineSpacing, paint)
             }
             canvas.restore()
@@ -171,6 +202,7 @@ internal object PhotoTranslationRenderer {
                     item.fullRect.toShortString() +
                     "；排版框=" + rect.toShortString() +
                     "；重疊分區=" + (item.fullRect != rect) +
+                    "；斜向四邊形=" + (item.skewedQuad != null) +
                     "；行數=" + item.translatedLines.size +
                     "；字級=" + item.fontSize.toInt())
             DiagnosticLog.photoResult(blockIndices[item.index], item.element.sourceLanguage,
@@ -184,6 +216,74 @@ internal object PhotoTranslationRenderer {
             "可畫段數=" + prepared.size + "；重疊重新分區=" + partitionsUsed +
             "；因重疊保留原文=" + (skipReasons["文字區塊重疊"] ?: 0))
         return Result(output, prepared.size, skipped, skipReasons, unchanged)
+    }
+
+    private fun quadPath(quad: List<OcrPoint>): Path = Path().apply {
+        moveTo(quad[0].x, quad[0].y)
+        for (i in 1..3) lineTo(quad[i].x, quad[i].y)
+        close()
+    }
+
+    /**
+     * Reconstruct only pixels INSIDE the actual skewed OCR polygon.
+     * Unlike filling its enclosing Rect, this avoids wiping unrelated rows,
+     * colorful titles and nearby artwork above/below the text baseline.
+     * Sample outside top/bottom edges from the ORIGINAL photo.
+     */
+    private fun eraseSkewedTextRegion(
+        target: Bitmap, original: Bitmap, quad: List<OcrPoint>
+    ) {
+        val left = quad.minOf { it.x.toInt() }.coerceIn(0, original.width - 1)
+        val top = quad.minOf { it.y.toInt() }.coerceIn(0, original.height - 1)
+        val right = (quad.maxOf { it.x }.toInt() + 1).coerceIn(1, original.width)
+        val bottom = (quad.maxOf { it.y }.toInt() + 1).coerceIn(1, original.height)
+        if (right <= left || bottom <= top) return
+        val width = right - left
+        val height = bottom - top
+        val pixels = IntArray(width * height)
+        original.getPixels(pixels, 0, width, left, top, width, height)
+        val start = quad[0]
+        val end = quad[1]
+        val textHeight = PhotoQuadGeometry.lineHeight(quad).coerceAtLeast(1f)
+        val textWidth = PhotoQuadGeometry.lineWidth(quad).coerceAtLeast(1f)
+        val normalX = -(end.y - start.y) / textWidth
+        val normalY = (end.x - start.x) / textWidth
+        val margin = (textHeight * .28f).coerceIn(5f, 11f)
+        fun sample(x: Float, y: Float): Int {
+            val rs = IntArray(9)
+            val gs = IntArray(9)
+            val bs = IntArray(9)
+            var n = 0
+            for (dy in -1..1) for (dx in -1..1) {
+                val px = original.getPixel(
+                    (x.toInt() + dx).coerceIn(0, original.width - 1),
+                    (y.toInt() + dy).coerceIn(0, original.height - 1))
+                rs[n] = Color.red(px)
+                gs[n] = Color.green(px)
+                bs[n] = Color.blue(px)
+                n++
+            }
+            rs.sort(); gs.sort(); bs.sort()
+            return Color.rgb(rs[4], gs[4], bs[4])
+        }
+        val tl = sample(quad[0].x - normalX * margin, quad[0].y - normalY * margin)
+        val tr = sample(quad[1].x - normalX * margin, quad[1].y - normalY * margin)
+        val bl = sample(quad[3].x + normalX * margin, quad[3].y + normalY * margin)
+        val br = sample(quad[2].x + normalX * margin, quad[2].y + normalY * margin)
+        val ux = (end.x - start.x) / textWidth
+        val uy = (end.y - start.y) / textWidth
+        for (y in top until bottom) for (x in left until right) {
+            val px = x + .5f
+            val py = y + .5f
+            if (!PhotoQuadGeometry.contains(quad, px, py)) continue
+            val dx = px - start.x
+            val dy = py - start.y
+            val tx = ((dx * ux + dy * uy) / textWidth).coerceIn(0f, 1f)
+            val ty = ((dx * normalX + dy * normalY) / textHeight).coerceIn(0f, 1f)
+            pixels[(y - top) * width + x - left] =
+                blend(blend(tl, tr, tx), blend(bl, br, tx), ty)
+        }
+        target.setPixels(pixels, 0, width, left, top, width, height)
     }
 
     fun isUsableRect(rect: Rect, width: Int, height: Int): Boolean {

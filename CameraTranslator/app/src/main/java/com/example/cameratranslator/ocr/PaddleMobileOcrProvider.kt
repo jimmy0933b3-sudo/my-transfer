@@ -6,6 +6,7 @@ import android.graphics.Rect
 import android.util.Log
 import com.example.cameratranslator.core.DiagnosticLog
 import com.example.cameratranslator.core.models.TextElement
+import com.example.cameratranslator.core.models.OcrPoint
 import com.paddle.ocr.EngineConfig
 import com.paddle.ocr.PaddleOCR
 import com.paddle.ocr.PaddleOCRConfig
@@ -116,7 +117,8 @@ class PaddleMobileOcrProvider(private val context: Context) {
                     sourceLanguage = language,
                     imageWidth = bitmap.width,
                     imageHeight = bitmap.height,
-                    ocrConfidence = item.confidence
+                    ocrConfidence = item.confidence,
+                    textQuad = box.map { OcrPoint(it.x, it.y) }
                 )
             }
             lastDiagnostic = version.label + "：模型載入 " + engine!!.coldLoadTimeMs +

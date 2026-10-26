@@ -1,5 +1,7 @@
 package com.example.cameratranslator.core
 
+import com.example.cameratranslator.core.models.OcrPoint
+
 /**
  * Photo-only editorial text protection. These rules prevent changing a
  * foreground graphic or pseudo-Latin template copy into an invented Chinese
@@ -9,7 +11,8 @@ internal object PhotoPosterTextPolicy {
     data class Block(
         val text: String,
         val language: String,
-        val box: PhotoTextBoxLayout.Box?
+        val box: PhotoTextBoxLayout.Box?,
+        val quad: List<OcrPoint>? = null
     )
 
     // Only correct the very specific "1l AM" / "1I PM" OCR confusion.
@@ -64,7 +67,12 @@ internal object PhotoPosterTextPolicy {
                 first.width.toLong() * first.height,
                 second.width.toLong() * second.height
             ).coerceAtLeast(1)
-            if ((w.toLong() * h) / smaller.toFloat() >= 0.30f) {
+            val areaOverlap = (w.toLong() * h) / smaller.toFloat()
+            val skewOverlap = if (PhotoQuadGeometry.eligible(a.quad) &&
+                PhotoQuadGeometry.eligible(b.quad)) {
+                PhotoQuadGeometry.overlapFraction(a.quad!!, b.quad!!)
+            } else areaOverlap
+            if (skewOverlap >= 0.30f) {
                 protected.add(i)
                 protected.add(j)
             }

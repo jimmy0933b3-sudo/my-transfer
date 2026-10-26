@@ -2,6 +2,9 @@ package com.example.cameratranslator.core.models
 
 import android.graphics.Rect
 
+/** OCR quadrilateral coordinates in image pixels, ordered TL/TR/BR/BL. */
+data class OcrPoint(val x: Float, val y: Float)
+
 data class TextElement(
     val id: String,
     val originalText: String,
@@ -17,5 +20,7 @@ data class TextElement(
     /** OCR model recognition confidence if supplied (Paddle); null for ML Kit. */
     val ocrConfidence: Float? = null,
     /** Cross-check found a credible alternate reading; don't paint unchecked text. */
-    val ocrReviewNeeded: Boolean = false
+    val ocrReviewNeeded: Boolean = false,
+    /** Preserve Paddle's four skewed corners for angle-aware photo replacement. */
+    val textQuad: List<OcrPoint>? = null
 )
