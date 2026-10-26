@@ -9,6 +9,7 @@ import android.graphics.Rect
 import android.graphics.Typeface
 import com.example.cameratranslator.core.models.TextElement
 import com.example.cameratranslator.core.models.OcrPoint
+import com.paddle.ocr.util.OpenCVTextInpaint
 import kotlin.math.max
 import kotlin.math.min
 
@@ -76,7 +77,6 @@ internal object PhotoTranslationRenderer {
                 clipped.left, clipped.top, clipped.right, clipped.bottom)
         }
         val layout = PhotoTextBoxLayout.partition(usable)
-        val occupied = mutableListOf<Rect>()
         val occupiedPolygons = mutableListOf<List<OcrPoint>>()
         val prepared = mutableListOf<Prepared>()
         var partitionsUsed = 0
@@ -158,25 +158,72 @@ internal object PhotoTranslationRenderer {
                 skip("翻譯字數超出文字框", index, element)
                 continue
             }
-            occupied.add(Rect(rect))
             occupiedPolygons += polygon
             if (rect != fullRect) partitionsUsed++
             prepared.add(Prepared(index, element, fullRect, rect,
                 chosenLines, lineSpacing, fontSize, paint, rotatedQuad))
         }
 
-        // Erase ALL accepted source rectangles first. Erasing per line AFTER
-        // drawing the previous line destroyed already translated text in
-        // overlapping OCR boxes; the original bitmap remains the sampler.
-        prepared.forEach {
-            if (it.skewedQuad != null)
-                eraseSkewedTextRegion(output, original, it.skewedQuad)
-            else eraseTextRegion(output, original, it.fullRect)
+        // Reconstruct the masked skewed text once from the ORIGINAL image.
+        // Four-corner color interpolation filled whole words with flat brown
+        // bands on the real slanted ErgoFlow poster. Inpainting preserves
+        // neighboring photo texture far better, without rectangular erasure.
+        // IMPORTANT: if the native renderer fails, do not paint on top of
+        // unremoved English. Leave those original pixels completely intact.
+        val skewed = prepared.mapNotNull { it.skewedQuad }
+        var inpaintSucceeded = true
+        if (skewed.isNotEmpty()) {
+            val mask = Bitmap.createBitmap(output.width, output.height,
+                Bitmap.Config.ARGB_8888)
+            try {
+                val maskCanvas = Canvas(mask)
+                maskCanvas.drawColor(Color.BLACK)
+                val fill = Paint().apply {
+                    isAntiAlias = false
+                    color = Color.WHITE
+                    style = Paint.Style.FILL
+                }
+                val stroke = Paint(fill).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = 2.5f
+                    strokeJoin = Paint.Join.ROUND
+                }
+                // 1.25px outward stroke removes antialiased English edges
+                // without extending to another line's enclosing rectangle.
+                skewed.forEach { quad ->
+                    val path = quadPath(quad)
+                    maskCanvas.drawPath(path, fill)
+                    maskCanvas.drawPath(path, stroke)
+                }
+                val restored = OpenCVTextInpaint.inpaint(original, mask)
+                if (restored == null) {
+                    inpaintSucceeded = false
+                    DiagnosticLog.record("PHOTO_RENDER",
+                        "OpenCV 文字背景修補未完成，安全保留斜向原文")
+                } else {
+                    canvas.drawBitmap(restored, 0f, 0f, null)
+                    restored.recycle()
+                }
+            } finally {
+                mask.recycle()
+            }
         }
+        // Preserve the legacy path for non-Paddle/non-rotated OCR; never
+        // interpolate inside the skewed OCR quadrilateral again.
+        prepared.forEach {
+            if (it.skewedQuad == null)
+                eraseTextRegion(output, original, it.fullRect)
+        }
+        var painted = 0
         for (item in prepared) {
+            if (item.skewedQuad != null && !inpaintSucceeded) {
+                skip("OpenCV 文字背景修補失敗", item.index, item.element)
+                continue
+            }
             val rect = item.layoutRect
             val paint = item.paint
             paint.textSize = item.fontSize
+            item.skewedQuad?.let { paint.color = readableInkColor(output, it) }
             val overallHeight = item.translatedLines.size * item.lineSpacing
             canvas.save()
             val quad = item.skewedQuad
@@ -197,6 +244,7 @@ internal object PhotoTranslationRenderer {
                     startY + i * item.lineSpacing, paint)
             }
             canvas.restore()
+            painted++
             DiagnosticLog.record("PHOTO_RENDER",
                 "編號=" + blockIndices[item.index] + "；結果=成功；框=" +
                     item.fullRect.toShortString() +
@@ -213,9 +261,10 @@ internal object PhotoTranslationRenderer {
                     "；字級=" + item.fontSize.toInt())
         }
         DiagnosticLog.record("RENDER_LAYOUT",
-            "可畫段數=" + prepared.size + "；重疊重新分區=" + partitionsUsed +
+            "可畫段數=" + painted + "；四邊形背景修補=" + inpaintSucceeded +
+                "；重疊重新分區=" + partitionsUsed +
             "；因重疊保留原文=" + (skipReasons["文字區塊重疊"] ?: 0))
-        return Result(output, prepared.size, skipped, skipReasons, unchanged)
+        return Result(output, painted, skipped, skipReasons, unchanged)
     }
 
     private fun quadPath(quad: List<OcrPoint>): Path = Path().apply {
@@ -224,66 +273,30 @@ internal object PhotoTranslationRenderer {
         close()
     }
 
-    /**
-     * Reconstruct only pixels INSIDE the actual skewed OCR polygon.
-     * Unlike filling its enclosing Rect, this avoids wiping unrelated rows,
-     * colorful titles and nearby artwork above/below the text baseline.
-     * Sample outside top/bottom edges from the ORIGINAL photo.
+    /** Choose legible ink from reconstructed background, not from the
+     * horizontal OCR Rect which also includes neighboring slanted rows.
      */
-    private fun eraseSkewedTextRegion(
-        target: Bitmap, original: Bitmap, quad: List<OcrPoint>
-    ) {
-        val left = quad.minOf { it.x.toInt() }.coerceIn(0, original.width - 1)
-        val top = quad.minOf { it.y.toInt() }.coerceIn(0, original.height - 1)
-        val right = (quad.maxOf { it.x }.toInt() + 1).coerceIn(1, original.width)
-        val bottom = (quad.maxOf { it.y }.toInt() + 1).coerceIn(1, original.height)
-        if (right <= left || bottom <= top) return
-        val width = right - left
-        val height = bottom - top
-        val pixels = IntArray(width * height)
-        original.getPixels(pixels, 0, width, left, top, width, height)
-        val start = quad[0]
-        val end = quad[1]
-        val textHeight = PhotoQuadGeometry.lineHeight(quad).coerceAtLeast(1f)
-        val textWidth = PhotoQuadGeometry.lineWidth(quad).coerceAtLeast(1f)
-        val normalX = -(end.y - start.y) / textWidth
-        val normalY = (end.x - start.x) / textWidth
-        val margin = (textHeight * .28f).coerceIn(5f, 11f)
-        fun sample(x: Float, y: Float): Int {
-            val rs = IntArray(9)
-            val gs = IntArray(9)
-            val bs = IntArray(9)
-            var n = 0
-            for (dy in -1..1) for (dx in -1..1) {
-                val px = original.getPixel(
-                    (x.toInt() + dx).coerceIn(0, original.width - 1),
-                    (y.toInt() + dy).coerceIn(0, original.height - 1))
-                rs[n] = Color.red(px)
-                gs[n] = Color.green(px)
-                bs[n] = Color.blue(px)
-                n++
-            }
-            rs.sort(); gs.sort(); bs.sort()
-            return Color.rgb(rs[4], gs[4], bs[4])
+    private fun readableInkColor(bitmap: Bitmap, quad: List<OcrPoint>): Int {
+        val p0 = quad[0]
+        val p1 = quad[1]
+        val p2 = quad[2]
+        val p3 = quad[3]
+        var lumaSum = 0f
+        var count = 0
+        // Sample along the CENTER of the healed line, away from other lines.
+        for (i in 1..7) {
+            val u = i / 8f
+            val x = ((p0.x + p3.x) * .5f * (1f - u) +
+                (p1.x + p2.x) * .5f * u).toInt()
+                .coerceIn(0, bitmap.width - 1)
+            val y = ((p0.y + p3.y) * .5f * (1f - u) +
+                (p1.y + p2.y) * .5f * u).toInt()
+                .coerceIn(0, bitmap.height - 1)
+            lumaSum += luma(bitmap.getPixel(x, y))
+            count++
         }
-        val tl = sample(quad[0].x - normalX * margin, quad[0].y - normalY * margin)
-        val tr = sample(quad[1].x - normalX * margin, quad[1].y - normalY * margin)
-        val bl = sample(quad[3].x + normalX * margin, quad[3].y + normalY * margin)
-        val br = sample(quad[2].x + normalX * margin, quad[2].y + normalY * margin)
-        val ux = (end.x - start.x) / textWidth
-        val uy = (end.y - start.y) / textWidth
-        for (y in top until bottom) for (x in left until right) {
-            val px = x + .5f
-            val py = y + .5f
-            if (!PhotoQuadGeometry.contains(quad, px, py)) continue
-            val dx = px - start.x
-            val dy = py - start.y
-            val tx = ((dx * ux + dy * uy) / textWidth).coerceIn(0f, 1f)
-            val ty = ((dx * normalX + dy * normalY) / textHeight).coerceIn(0f, 1f)
-            pixels[(y - top) * width + x - left] =
-                blend(blend(tl, tr, tx), blend(bl, br, tx), ty)
-        }
-        target.setPixels(pixels, 0, width, left, top, width, height)
+        return if (lumaSum / count > 135f) Color.rgb(20, 25, 30)
+            else Color.WHITE
     }
 
     fun isUsableRect(rect: Rect, width: Int, height: Int): Boolean {
