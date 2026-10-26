@@ -36,6 +36,14 @@ class PhotoNumericEvidenceTest {
             "13–15 เมษายน", "5月13日至15日"))
     }
 
+    @Test fun englishPosterDates() {
+        assertFalse(PhotoNumericEvidence.mismatched("10 January", "1月10日"))
+        assertFalse(PhotoNumericEvidence.mismatched("January 10", "1月10日"))
+        assertFalse(PhotoNumericEvidence.mismatched("22-23 NOV 2019", "2019年11月22日至23日"))
+        assertTrue(PhotoNumericEvidence.mismatched("10 January", "2月10日"))
+        assertTrue(PhotoNumericEvidence.mismatched("10 January", "1月11日"))
+    }
+
     @Test fun noNumericEvidenceDoesNotEraseTranslation() {
         assertFalse(PhotoNumericEvidence.mismatched("コレクションシート", "收藏清單"))
         assertFalse(PhotoNumericEvidence.mismatched("10種類", "總共有許多種類"))
