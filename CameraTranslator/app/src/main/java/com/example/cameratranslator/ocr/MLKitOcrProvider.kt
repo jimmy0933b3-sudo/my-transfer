@@ -178,6 +178,31 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
                     ), paddleEnglish
                 )
             }
+            // A large, accurately read decorative title can contain
+            // two smaller Tesseract hallucinations. The renderer currently
+            // skips those by overlap only AFTER paying for cloud translation.
+            // Remove them before they enter the translation queue.
+            val thaiCandidates = mixedScriptSafe.mapNotNull { item ->
+                val box = item.boundingBox ?: return@mapNotNull null
+                ThaiPhotoLinePolicy.Line(
+                    item.originalText, box.left, box.top, box.right, box.bottom,
+                    item.ocrConfidence ?: 0f
+                )
+            }
+            val thaiDeduplicated = ThaiPhotoLinePolicy.suppressNestedThaiFragments(
+                thaiCandidates
+            )
+            val uniqueThai = mixedScriptSafe.filter { item ->
+                val box = item.boundingBox ?: return@filter false
+                ThaiPhotoLinePolicy.Line(
+                    item.originalText, box.left, box.top, box.right, box.bottom,
+                    item.ocrConfidence ?: 0f
+                ) in thaiDeduplicated
+            }
+            com.example.cameratranslator.core.DiagnosticLog.record(
+                "THAI_CROSSCHECK", "完整主標題覆蓋之殘字排除=" +
+                    (mixedScriptSafe.size - uniqueThai.size)
+            )
             val englishElements = english.mapIndexed { i, line ->
                 TextElement(
                     id = "en:thai-photo:" + i + ":" + line.text.hashCode(),
@@ -200,10 +225,10 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
             )
             com.example.cameratranslator.core.DiagnosticLog.record(
                 "THAI_OCR", "網址安全過濾後=" + safeLines.size +
-                    "；泰文逐行輸出=" + safeLines.size +
+                    "；泰文逐行輸出=" + uniqueThai.size +
                     "；禁止跨行段落合併=true"
             )
-            mixedScriptSafe.forEachIndexed { index, line ->
+            uniqueThai.forEachIndexed { index, line ->
                 val box = line.boundingBox
                 com.example.cameratranslator.core.DiagnosticLog.photoBlock(
                     "THAI_FINAL", index, "th", line.originalText,
@@ -214,7 +239,7 @@ class MLKitOcrProvider(context: Context) : OcrProvider {
             // Thai page-segmentation already yields printed lines. Joining them
             // again across nearby baselines turns three poster headings into
             // one giant rectangle and destroys the correct paint geometry.
-            return (mixedScriptSafe + englishElements)
+            return (uniqueThai + englishElements)
                 .sortedWith(compareBy<TextElement> { it.boundingBox?.top ?: 0 }
                     .thenBy { it.boundingBox?.left ?: 0 })
         }
