@@ -63,7 +63,8 @@ internal object PhotoTranslationQuality {
         original: String,
         translated: String,
         source: String,
-        target: String
+        target: String,
+        trustedLatinWords: Set<String> = emptySet()
     ): String? {
         val input = original.trim()
         val output = translated.trim()
@@ -84,7 +85,10 @@ internal object PhotoTranslationQuality {
         // Compare Arabic numerals only when both sides still use numerals.
         // Chinese number words may be legitimate, so avoid speculative rejection.
         if (source != target) {
-            if (PhotoNumericEvidence.mismatched(input, output)) {
+            if (PhotoNumericEvidence.mismatched(input, output) &&
+                !(source == "en" && target == "zh" &&
+                    com.example.cameratranslator.ocr.ThaiPhotoLinePolicy
+                        .translateEnglishEventDate(input) == output)) {
                 return "原文與譯文的數字不一致"
             }
         }
@@ -102,7 +106,7 @@ internal object PhotoTranslationQuality {
                 .map { it.value.lowercase(Locale.ROOT) }.toSet()
             val unexplainedWords = latinWords.findAll(output)
                 .map { it.value.lowercase(Locale.ROOT) }
-                .filterNot { it in inputWords }.toList()
+                .filterNot { it in inputWords || it in trustedLatinWords }.toList()
             if (unexplainedWords.isNotEmpty()) {
                 return "譯文含原文沒有的英文片段：" + unexplainedWords.take(2).joinToString()
             }
