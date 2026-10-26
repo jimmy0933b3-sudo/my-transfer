@@ -25,6 +25,19 @@ class PhotoQuadGeometryTest {
         assertTrue(PhotoQuadGeometry.overlapFraction(firstBox, secondBox) > .23f)
     }
 
+    @Test fun posterMaskMustNotEraseNextDiagonalTextRow() {
+        // Source: actual Samsung Android 16 ErgoFlow poster OCR v6 vertices.
+        // Rectangular inpainting includes the neighboring word, while the
+        // quadrilateral mask correctly leaves its center outside the mask.
+        val headline = q(39f, 708f, 403f, 629f, 411f, 665f, 47f, 744f)
+        val nextRow = q(56f, 741f, 414f, 659f, 422f, 693f, 63f, 775f)
+        val x = nextRow.map { it.x }.average().toFloat()
+        val y = nextRow.map { it.y }.average().toFloat()
+        assertTrue(PhotoQuadGeometry.contains(nextRow, x, y))
+        assertFalse(PhotoQuadGeometry.contains(headline, x, y))
+        assertTrue(x in 39f..411f && y in 629f..744f)
+    }
+
     @Test fun genuinePolygonsAreRejectedWhenTheyOverlayOneAnother() {
         val first = q(100f, 130f, 300f, 100f, 305f, 140f, 105f, 170f)
         val other = q(104f, 130f, 300f, 104f, 304f, 144f, 108f, 170f)
