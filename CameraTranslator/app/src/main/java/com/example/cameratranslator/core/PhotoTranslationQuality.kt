@@ -101,6 +101,10 @@ internal object PhotoTranslationQuality {
                 return "原文與譯文的數字不一致"
             }
         }
+        if (source == "en" && target == "zh" &&
+            PhotoNumericEvidence.missingUsdAmount(input, output)) {
+            return "美元金額在譯文中遺失"
+        }
         // Catch explicit Japanese negatives that seem to turn into Chinese
         // affirmatives. "只能／限定" preserves ～しか～ない restrictions.
         if (source == "ja" && target == "zh" &&

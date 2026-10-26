@@ -30,8 +30,11 @@ internal object PhotoQuadGeometry {
         val angle = abs(angleDegrees(points))
         val w = lineWidth(points)
         val h = lineHeight(points)
-        return angle in 5f..35f && w >= 24f && h >= 12f &&
-            w >= h * 1.5f && polygonArea(points) >= 260f
+        // Manual photo rotation must not force vertical/half-turned text
+        // back to an axis-aligned erasure rectangle.
+        return angle in 5f..175f && w >= 24f && h >= 12f &&
+            w >= h * 1.5f && polygonArea(points) >= 260f &&
+            isConvex(points)
     }
 
     fun polygonArea(points: List<OcrPoint>): Float {
@@ -42,6 +45,19 @@ internal object PhotoQuadGeometry {
             sum += a.x * b.y - b.x * a.y
         }
         return abs(sum) * .5f
+    }
+
+    private fun isConvex(points: List<OcrPoint>): Boolean {
+        var orientation = 0
+        for (i in points.indices) {
+            val turn = cross(points[i], points[(i + 1) % 4],
+                points[(i + 2) % 4])
+            if (!turn.isFinite() || abs(turn) < 0.01f) return false
+            val direction = if (turn > 0f) 1 else -1
+            if (orientation != 0 && orientation != direction) return false
+            orientation = direction
+        }
+        return true
     }
 
     private fun signedArea(points: List<OcrPoint>): Float {

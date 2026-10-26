@@ -31,6 +31,21 @@ class PhotoQuadGeometryTest {
         assertTrue(PhotoQuadGeometry.overlapFraction(first, other) > .75f)
     }
 
+    @Test fun manualQuarterTurnStillUsesRotatedQuad() {
+        val row = q(100f, 130f, 300f, 90f, 310f, 130f, 110f, 170f)
+        val quarterTurn = PhotoBitmapRotation.clockwise(row, 800)
+        assertTrue(PhotoQuadGeometry.eligible(row))
+        assertTrue(PhotoQuadGeometry.angleDegrees(quarterTurn) > 75f)
+        assertTrue(PhotoQuadGeometry.eligible(quarterTurn))
+        val halfTurn = PhotoBitmapRotation.clockwise(quarterTurn, 800)
+        assertTrue(PhotoQuadGeometry.eligible(halfTurn))
+    }
+
+    @Test fun invalidConcaveQuadCannotEraseBackground() {
+        val concave = q(100f, 130f, 300f, 90f, 160f, 145f, 110f, 170f)
+        assertFalse(PhotoQuadGeometry.eligible(concave))
+    }
+
     @Test fun polygonInsideAndOutsideSamples() {
         val p = q(100f, 130f, 300f, 100f, 305f, 140f, 105f, 170f)
         assertTrue(PhotoQuadGeometry.contains(p, 198f, 133f))

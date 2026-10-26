@@ -13,7 +13,9 @@ import java.text.Normalizer
 internal object PhotoNumericEvidence {
     private val arabic = Regex("(?<![A-Za-z0-9])\\d+(?:[.,]\\d+)*(?![A-Za-z0-9])")
     private val thousands = Regex(",(?=\\d{3}(?:\\D|$))")
-    private val written = Regex("[零〇一二三四五六七八九十百千兩两]+(?=年|月|日|種|个|個|款|件|台|輛|次|份|頁|元|名|張|歲|週|周|盒|%|％)")
+    // An explicit dollar amount is evidence that should survive translation.
+    private val usdAmount = Regex("""(?<![A-Za-z0-9])\\$\\s*(\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.(\\d{1,2}))?(?![A-Za-z0-9])""")
+    private val written = Regex("[零〇一二三四五六七八九十百千兩两]+(?=年|月|日|種|个|個|款|件|台|輛|次|份|頁|元|美元|美金|名|張|歲|週|周|盒|%|％)")
     private val thaiMonthNames = listOf(
         "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน",
         "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม",
@@ -96,6 +98,17 @@ internal object PhotoNumericEvidence {
                 .forEach { monthNumber(it)?.let(result::add) }
         }
         return result.sorted()
+    }
+
+    /** Fail closed only when a known USD value is missing from the translation. */
+    fun missingUsdAmount(source: String, translation: String): Boolean {
+        val normalized = Normalizer.normalize(source, Normalizer.Form.NFKC)
+        val amounts = usdAmount.findAll(normalized).mapNotNull { match ->
+            tokens(match.value, includeWritten = false).singleOrNull()
+        }.toList()
+        if (amounts.isEmpty()) return false
+        val translatedNumbers = tokens(translation, includeWritten = true)
+        return amounts.any { it !in translatedNumbers }
     }
 
     /** True only if there is positive contradictory numeric evidence. */
