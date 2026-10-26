@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.Typeface
+import android.os.SystemClock
 import com.example.cameratranslator.core.models.TextElement
 import com.example.cameratranslator.core.models.OcrPoint
 import com.paddle.ocr.util.OpenCVTextInpaint
@@ -173,6 +174,7 @@ internal object PhotoTranslationRenderer {
         val skewed = prepared.mapNotNull { it.skewedQuad }
         var inpaintSucceeded = true
         if (skewed.isNotEmpty()) {
+            val inpaintStarted = SystemClock.elapsedRealtime()
             val mask = Bitmap.createBitmap(output.width, output.height,
                 Bitmap.Config.ARGB_8888)
             try {
@@ -207,6 +209,11 @@ internal object PhotoTranslationRenderer {
             } finally {
                 mask.recycle()
             }
+            DiagnosticLog.record("PHOTO_RENDER",
+                "斜向遮罩修補耗時=" +
+                    (SystemClock.elapsedRealtime() - inpaintStarted) +
+                    "ms；四邊形=" + skewed.size +
+                    "；狀態=" + if (inpaintSucceeded) "完成" else "安全保留原文")
         }
         // Preserve the legacy path for non-Paddle/non-rotated OCR; never
         // interpolate inside the skewed OCR quadrilateral again.
