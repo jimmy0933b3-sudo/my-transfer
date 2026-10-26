@@ -146,6 +146,58 @@ internal object ThaiPhotoLinePolicy {
         return result.sortedWith(compareBy<Line> { it.top }.thenBy { it.left })
     }
 
+    /**
+     * Suppress illegible OCR fragments nested in a complete, reliable Thai
+     * decorative headline. An intersecting but separate printed line does
+     * not count: require near total containment and strong confidence delta.
+     */
+    fun suppressNestedThaiFragments(lines: List<Line>): List<Line> =
+        lines.filterNot { candidate ->
+            val candidateArea = candidate.width.toLong() * candidate.height
+            candidateArea > 0 && lines.any { parent ->
+                parent !== candidate &&
+                    parent.confidence >= .90f &&
+                    parent.confidence >= candidate.confidence + .09f &&
+                    parent.width >= candidate.width * 1.12f &&
+                    parent.height >= candidate.height * 1.08f &&
+                    parent.width.toLong() * parent.height >= candidateArea * 1.4f &&
+                    intersection(parent, candidate) >= candidateArea * .92f
+            }
+        }
+
+    /**
+     * Parse independently verified English poster dates. OCR may emit
+     * "3: PM" for the printed "3 PM"; missing minutes mean zero minutes.
+     * Do not guess the date from ambiguous Thai glyph strings.
+     */
+    fun translateEnglishEventDate(value: String): String? {
+        val match = Regex(
+            """(?i)^\s*(\d{1,2})\s*[-–]\s*(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s*/?\s*(\d{1,2})(?::\s*(\d{0,2}))?\s*(AM|PM)\s*[-–]\s*(\d{1,2})(?::\s*(\d{0,2}))?\s*(AM|PM)\s*$"""
+        ).matchEntire(value) ?: return null
+        val months = listOf("jan", "feb", "mar", "apr", "may", "jun",
+            "jul", "aug", "sep", "oct", "nov", "dec")
+        val month = months.indexOf(match.groupValues[3].lowercase()) + 1
+        if (month == 0) return null
+        val year = match.groupValues[4].toIntOrNull() ?: return null
+        val firstDay = match.groupValues[1].toIntOrNull() ?: return null
+        val lastDay = match.groupValues[2].toIntOrNull() ?: return null
+        val startHour = match.groupValues[5].toIntOrNull() ?: return null
+        val endHour = match.groupValues[8].toIntOrNull() ?: return null
+        val startMinute = match.groupValues[6].ifBlank { "0" }.toIntOrNull() ?: return null
+        val endMinute = match.groupValues[9].ifBlank { "0" }.toIntOrNull() ?: return null
+        if (year !in 1900..2099 || firstDay !in 1..31 ||
+            lastDay !in firstDay..31 || startHour !in 1..12 ||
+            endHour !in 1..12 || startMinute !in 0..59 || endMinute !in 0..59)
+            return null
+        val startHalf = if (match.groupValues[7].equals("PM", true)) "下午" else "上午"
+        val endHalf = if (match.groupValues[10].equals("PM", true)) "下午" else "上午"
+        fun clock(hour: Int, minute: Int): String =
+            "${hour}時" + if (minute > 0) "${minute}分" else ""
+        return "${year}年${month}月${firstDay}日至${lastDay}日，" +
+            startHalf + clock(startHour, startMinute) + "至" +
+            (if (startHalf == endHalf) "" else endHalf) + clock(endHour, endMinute)
+    }
+
     private val latinUrl = Regex(
         """(?i)(?:https?://|(?:[a-z0-9-]+\.)+(?:com|net|org|co|tw|io|app)(?:/|$))"""
     )
