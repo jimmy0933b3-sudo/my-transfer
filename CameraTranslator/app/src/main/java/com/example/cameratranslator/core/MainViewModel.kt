@@ -689,6 +689,14 @@ class MainViewModel @Inject constructor(
             "；雙引擎待確認=" + reviewNeeded)
         val selected = contextual.filter {
             !it.originalText.isBlank() && it.originalText.length > 1
+        }.map { element ->
+            val cleaned = PhotoPosterTextPolicy.normalizeEnglishTime(
+                element.originalText, element.sourceLanguage
+            )
+            if (cleaned != element.originalText) {
+                DiagnosticLog.record("OCR_CONTEXT", "英文時間字型混淆已校正")
+                element.copy(originalText = cleaned)
+            } else element
         }.distinctBy {
             it.originalText.trim() + "@" +
                 (it.boundingBox?.left ?: 0) + ":" + (it.boundingBox?.top ?: 0)
@@ -735,6 +743,28 @@ class MainViewModel @Inject constructor(
         DiagnosticLog.record("OCR_CONTEXT", "完整照片語境：收藏單=" +
             photoSceneRecognized + "；第二套 OCR 線索=" +
             secondaryPhotoContext.size + "；本次OCR=" + mode)
+        // Preserve overlapping poster artwork and Latin mockup copy:
+        // erasing a large headline rectangle can destroy its foreground label.
+        val graphicProtected = PhotoPosterTextPolicy.protectedOverprintIndices(
+            selected.map { block ->
+                val box = block.boundingBox?.let {
+                    PhotoTextBoxLayout.Box(it.left, it.top, it.right, it.bottom)
+                }
+                PhotoPosterTextPolicy.Block(
+                    block.originalText, block.sourceLanguage, box
+                )
+            }
+        )
+        val literalProtected = selected.indices.filter { index ->
+            PhotoPosterTextPolicy.preserveLiteral(
+                selected[index].originalText,
+                selected[index].sourceLanguage, photoContext
+            )
+        }.toSet()
+        val preserveOriginal = graphicProtected + literalProtected
+        DiagnosticLog.record("OCR_CONTEXT",
+            "設計重疊標題保留=" + graphicProtected.size +
+            "；佔位文字及網址保留=" + literalProtected.size)
         var photoGlossaryHits = 0
         var thaiCalendarAccepted = 0
         var brandPreserved = 0
@@ -752,6 +782,7 @@ class MainViewModel @Inject constructor(
             val block = selected[index]
             val original = block.originalText.trim()
             requestedSource != requestedTarget &&
+                index !in preserveOriginal &&
                 block.sourceLanguage != requestedTarget &&
                 !block.ocrReviewNeeded &&
                 !(block.sourceLanguage == "th" &&
@@ -910,15 +941,17 @@ class MainViewModel @Inject constructor(
             val brand = PhotoBrandPolicy.shouldPreserve(
                 original, block.sourceLanguage, requestedSource
             )
+            val originalProtected = i in preserveOriginal
             val translated: String?
             val provider: String
             if (requestedSource == requestedTarget ||
-                brand || block.sourceLanguage == requestedTarget ||
+                brand || originalProtected || block.sourceLanguage == requestedTarget ||
                 (block.sourceLanguage == "th" &&
                     com.example.cameratranslator.ocr.ThaiPhotoLinePolicy.isDateRange(original))
             ) {
                 translated = original
                 provider = when {
+                    originalProtected -> "版面或佔位文字保留原文"
                     brand -> "品牌名稱保留原文"
                     block.sourceLanguage == "th" &&
                         com.example.cameratranslator.ocr.ThaiPhotoLinePolicy.isDateRange(original) ->
