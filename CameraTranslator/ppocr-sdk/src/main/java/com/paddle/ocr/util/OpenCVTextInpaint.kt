@@ -3,7 +3,6 @@ package com.paddle.ocr.util
 import android.graphics.Bitmap
 import org.opencv.android.OpenCVLoader
 import org.opencv.android.Utils
-import org.opencv.core.Core
 import org.opencv.core.Mat
 import org.opencv.imgproc.Imgproc
 import org.opencv.photo.Photo
@@ -18,7 +17,14 @@ import org.opencv.photo.Photo
 object OpenCVTextInpaint {
     fun inpaint(original: Bitmap, mask: Bitmap): Bitmap? {
         if (original.width != mask.width || original.height != mask.height) return null
-        if (!OpenCVLoader.initDebug()) return null
+        val nativeReady = try {
+            OpenCVLoader.initDebug()
+        } catch (_: RuntimeException) {
+            false
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+        if (!nativeReady) return null
         val srcRgba = Mat()
         val srcRgb = Mat()
         val maskRgba = Mat()
