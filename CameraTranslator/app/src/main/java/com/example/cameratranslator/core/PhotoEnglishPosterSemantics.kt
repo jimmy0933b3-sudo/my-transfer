@@ -30,7 +30,10 @@ internal object PhotoEnglishPosterSemantics {
                 Regex.escape(candidate) + "(?![A-Za-z])").containsMatchIn(row) &&
                 !site.containsMatchIn(row)
         }
-        return domain && mentioned
+        // A distinctive internal capital, independently printed elsewhere,
+        // also corroborates a mark if the OCR damaged the web domain.
+        val camelName = Regex("[a-z][A-Z]").containsMatchIn(candidate)
+        return mentioned && (domain || camelName)
     }
 
     fun normalize(text: String, language: String, fullPhoto: List<String>): String {
@@ -39,8 +42,8 @@ internal object PhotoEnglishPosterSemantics {
         // An isolated "S" between Save and a sum is a common dollar-sign
         // OCR confusion on flyers. Never change ordinary S+digits elsewhere.
         val m = saving.matchEntire(value)
-        if (m != null) value = value.replaceFirst(
-            Regex("""(?i)\bSave\s+S(?=\d)"""), "Save $")
+        if (m != null && value.contains(Regex("""(?i)^Save\s+S\d""")))
+            value = "Save \$" + m.groupValues[1] + " + FREE Shipping!"
         // Duplicated trailing l in the flyer tag, validated by an
         // independently detected timed-offer heading.
         if (value.equals("Early Bird Speciall", true) &&
@@ -74,7 +77,7 @@ internal object PhotoEnglishPosterSemantics {
         if (promotionContext && input.equals("CLAIM YOUR OFFER NOW", true))
             return "立即領取優惠"
         saving.matchEntire(input)?.let { m ->
-            if (promotionContext) return "省下 $${m.groupValues[1]}，另享免運費！"
+            if (promotionContext) return "省下 \$" + m.groupValues[1] + "，另享免運費！"
         }
         return null
     }
