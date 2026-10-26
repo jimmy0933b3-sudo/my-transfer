@@ -85,6 +85,10 @@ internal object PhotoTranslationGlossary {
             }
         }
         if (source == "en" && target == "zh") {
+            // Strictly parsed poster dates are safer than passing a
+            // numeric-heavy OCR line through machine translation.
+            com.example.cameratranslator.ocr.ThaiPhotoLinePolicy
+                .translateEnglishEventDate(original)?.let { return it }
             // "Himalaya" is a brand printed repeatedly with a product series.
             // Without independent package evidence, keep the ordinary cloud
             // translation (e.g. geography) rather than guessing a brand.
