@@ -108,4 +108,37 @@ class PhotoTranslationQualityTest {
         assertNull(PhotoTranslationQuality.rejectOcr(
             "コレクションシート", "ja", 0.31f))
     }
+
+    @Test fun localThaiProductCanUseIndependentlyReadBrandWithoutLooseningCloudGate() {
+        val original = "หิมาลายา ซีเครห โกลด์ โอเวอร์ในห์ มาส์ก"
+        val output = "喜馬拉雅 Secret Gold 晚安面膜"
+        assertNotNull(PhotoTranslationQuality.rejectTranslation(
+            original, output, "th", "zh"))
+        assertNotNull(PhotoTranslationQuality.rejectTranslation(
+            original, output, "th", "zh", setOf("secret")))
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            original, output, "th", "zh", setOf("secret", "gold")))
+        assertNotNull(PhotoTranslationQuality.rejectTranslation(
+            original, "喜馬拉雅 Secret Gold Invented 晚安面膜",
+            "th", "zh", setOf("secret", "gold")))
+    }
+
+    @Test fun validatedPosterDateMayExpandEnglishMonthButNotInventWrongDate() {
+        val original = "22-23 NOV 2019/ 3: PM - 8:30 PM"
+        assertNull(PhotoTranslationQuality.rejectTranslation(
+            original, "2019年11月22日至23日，下午3時至8時30分", "en", "zh"))
+        assertNotNull(PhotoTranslationQuality.rejectTranslation(
+            original, "2019年12月22日至23日，下午3時至8時30分", "en", "zh"))
+        assertNotNull(PhotoTranslationQuality.rejectTranslation(
+            original, "2019年11月22日至24日，下午3時至8時30分", "en", "zh"))
+    }
+
+    @Test fun mixedNumericThaiFooterNoiseIsNotPublishedAsFabricatedName() {
+        assertNotNull(PhotoTranslationQuality.rejectOcr(
+            "แสีถิเศวธิ218", "th", .552078f))
+        assertNull(PhotoTranslationQuality.rejectOcr(
+            "22-23", "th", .552078f))
+        assertNull(PhotoTranslationQuality.rejectOcr(
+            "สวัสดีปีใหม่", "th", .95f))
+    }
 }
