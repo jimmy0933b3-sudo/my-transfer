@@ -24,7 +24,7 @@ internal object PhotoNumericEvidence {
     // Require an adjacent day and a known month, never treat arbitrary
     // standalone words like "may" as calendar evidence.
     private val englishMonthPattern =
-        "(?:january|february|march|april|may|june|july|august|september|sept?|october|november|december|jan|feb|mar|apr|jun|jul|aug|oct|dec)"
+        "(?:january|february|march|april|may|june|july|august|september|sept?|october|november|december|jan|feb|mar|apr|jun|jul|aug|oct|nov|dec)"
     private val englishDayMonth = Regex(
         "(?i)\\b(?:[0-2]?\\d|3[01])\\s+(" + englishMonthPattern + ")\\b"
     )
