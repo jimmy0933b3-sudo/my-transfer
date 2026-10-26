@@ -751,7 +751,7 @@ class MainViewModel @Inject constructor(
                     PhotoTextBoxLayout.Box(it.left, it.top, it.right, it.bottom)
                 }
                 PhotoPosterTextPolicy.Block(
-                    block.originalText, block.sourceLanguage, box
+                    block.originalText, block.sourceLanguage, box, block.textQuad
                 )
             }
         )
