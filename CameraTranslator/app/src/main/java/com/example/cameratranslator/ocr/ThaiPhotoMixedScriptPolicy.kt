@@ -40,9 +40,22 @@ internal object ThaiPhotoMixedScriptPolicy {
             clean.none { it in "[]{}<>|/#=" }
     }
 
-    fun reliableEnglishCandidate(block: Block): Boolean =
-        block.width >= 20 && block.height >= 12 &&
-            reliableEnglish(block.text, block.confidence)
+    fun reliableEnglishCandidate(block: Block): Boolean {
+        if (block.width < 20 || block.height < 12) return false
+        // Very tall, nearly square English boxes are often 45-degree
+        // diagonal stock-image watermarks rather than horizontal captions.
+        // For a short word such as "pngtee"/"ongtree", avoid destructive
+        // Chinese painting even when OCR confidence is misleadingly high.
+        if (block.text.trim().length <= 12 &&
+            block.height >= 60 &&
+            block.height >= block.width * .55f) return false
+        // Numeric-heavy event dates do not satisfy the ordinary 75% English
+        // letter ratio, but an independently legible date/time is stronger
+        // evidence than Tesseract's Thai-looking digit hallucinations.
+        return reliableEnglish(block.text, block.confidence) ||
+            (block.confidence >= .90f &&
+                ThaiPhotoLinePolicy.translateEnglishEventDate(block.text) != null)
+    }
 
     /** Same-baseline neighboring words become one phrase for Azure. */
     fun groupEnglish(blocks: List<Block>): List<Block> {
