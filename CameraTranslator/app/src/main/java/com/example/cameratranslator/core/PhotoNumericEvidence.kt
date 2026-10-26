@@ -19,6 +19,27 @@ internal object PhotoNumericEvidence {
         "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม",
         "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
     )
+    // OCR may read an English date ("10 January") correctly while the
+    // Chinese translation naturally spells out its month ("1月10日").
+    // Require an adjacent day and a known month, never treat arbitrary
+    // standalone words like "may" as calendar evidence.
+    private val englishMonthPattern =
+        "(?:january|february|march|april|may|june|july|august|september|sept?|october|november|december|jan|feb|mar|apr|jun|jul|aug|oct|nov|dec)"
+    private val englishDayMonth = Regex(
+        "(?i)\\b(?:[0-2]?\\d|3[01])\\s+(" + englishMonthPattern + ")\\b"
+    )
+    private val englishMonthDay = Regex(
+        "(?i)\\b(" + englishMonthPattern + ")\\s+(?:[0-2]?\\d|3[01])\\b"
+    )
+    private fun monthNumber(name: String): String? =
+        when (name.lowercase().take(3)) {
+            "jan" -> "1"; "feb" -> "2"; "mar" -> "3"
+            "apr" -> "4"; "may" -> "5"; "jun" -> "6"
+            "jul" -> "7"; "aug" -> "8"; "sep" -> "9"
+            "oct" -> "10"; "nov" -> "11"; "dec" -> "12"
+            else -> null
+        }
+
     private val digits = mapOf(
         '零' to 0, '〇' to 0, '一' to 1, '二' to 2, '兩' to 2, '两' to 2,
         '三' to 3, '四' to 4, '五' to 5, '六' to 6, '七' to 7, '八' to 8, '九' to 9
@@ -46,7 +67,7 @@ internal object PhotoNumericEvidence {
         return (total + current).toString()
     }
 
-    private fun tokens(text: String, includeWritten: Boolean, includeThaiMonth: Boolean = false): List<String> {
+    private fun tokens(text: String, includeWritten: Boolean, includeThaiMonth: Boolean = false, includeEnglishMonth: Boolean = false): List<String> {
         val normalized = Normalizer.normalize(text, Normalizer.Form.NFKC)
             .map { digit ->
                 if (digit in '๐'..'๙') ('0'.code + digit.code - '๐'.code).toChar()
@@ -69,12 +90,17 @@ internal object PhotoNumericEvidence {
                 if (name in normalized) result.add((index + 1).toString())
             }
         }
+        if (includeEnglishMonth && result.isNotEmpty()) {
+            (englishDayMonth.findAll(normalized).map { it.groupValues[1] } +
+                englishMonthDay.findAll(normalized).map { it.groupValues[1] })
+                .forEach { monthNumber(it)?.let(result::add) }
+        }
         return result.sorted()
     }
 
     /** True only if there is positive contradictory numeric evidence. */
     fun mismatched(source: String, translation: String): Boolean {
-        val original = tokens(source, includeWritten = false, includeThaiMonth = true)
+        val original = tokens(source, includeWritten = false, includeThaiMonth = true, includeEnglishMonth = true)
         if (original.isEmpty()) return false
         val target = tokens(translation, includeWritten = true)
         // No digit or explicit numeric word: fail open rather than erase an

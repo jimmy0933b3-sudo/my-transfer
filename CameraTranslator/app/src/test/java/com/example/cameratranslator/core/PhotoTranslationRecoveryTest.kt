@@ -144,6 +144,30 @@ class PhotoTranslationRecoveryTest {
     }
 
     @Test
+    fun uppercaseEnglishEchoIsNotCountedAsOfflineRecovery() = runBlocking {
+        val result = PhotoTranslationRecovery.resolve(
+            original = "sed diam nonummy nibh eu-", source = "en", target = "zh",
+            translation = "sed diam nonummy nibh eu-",
+            provider = "Azure 雲端", offlineReady = true
+        ) { "SED DIAM NONUMMY NIBH EU-" }
+        assertNull(result.translated)
+        assertTrue(result.cloudQualityFailed)
+        assertTrue(result.offlineAttempted)
+        assertFalse(result.recovered)
+    }
+
+    @Test
+    fun punctuationOnlyCloudEchoIsRejected() = runBlocking {
+        val result = PhotoTranslationRecovery.resolve(
+            original = "Lorem ipsum dolor sit amet,", source = "en", target = "zh",
+            translation = "LOREM IPSUM DOLOR SIT AMET。",
+            provider = "Azure 雲端", offlineReady = false
+        ) { null }
+        assertNull(result.translated)
+        assertNotNull(result.rejectionReason)
+    }
+
+    @Test
     fun absentPrimaryTranslationStaysAbsentWithoutNewCloudRequests() = runBlocking {
         val result = PhotoTranslationRecovery.resolve(
             original = longThai, source = "th", target = "zh",

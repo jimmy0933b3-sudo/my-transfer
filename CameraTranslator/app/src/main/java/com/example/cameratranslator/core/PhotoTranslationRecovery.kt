@@ -8,6 +8,12 @@ package com.example.cameratranslator.core
  * This does not download models or make additional cloud requests.
  */
 internal object PhotoTranslationRecovery {
+    // Cloud/ML Kit often return only a capitalized version of Latin source
+    // (e.g. "sed diam..." -> "SED DIAM..."). That is not Chinese translation.
+    private fun latinEcho(source: String, candidate: String): Boolean =
+        source.filter(Char::isLetterOrDigit).lowercase(java.util.Locale.ROOT) ==
+            candidate.filter(Char::isLetterOrDigit).lowercase(java.util.Locale.ROOT)
+
     data class Result(
         val translated: String?,
         val provider: String,
@@ -35,7 +41,8 @@ internal object PhotoTranslationRecovery {
             // are handled by their own providers and remain unchanged.
             val untranslatedEcho = source != target &&
                 provider in setOf("Azure 雲端", "ML Kit 離線") &&
-                original.trim() == candidate.trim() &&
+                (original.trim() == candidate.trim() ||
+                    (source == "en" && latinEcho(original, candidate))) &&
                 (source in setOf("en", "th") ||
                     (source == "ja" && candidate.any { it in '\u3040'..'\u30ff' }))
             if (untranslatedEcho) "譯文與原文相同，疑似未翻譯"
@@ -60,7 +67,8 @@ internal object PhotoTranslationRecovery {
         val alternate = translateOffline()
         if (!alternate.isNullOrBlank() &&
             // A failed/offline untranslated echo is not a successful recovery.
-            (source == target || alternate.trim() != original.trim()) &&
+            (source == target || (alternate.trim() != original.trim() &&
+                !(source == "en" && latinEcho(original, alternate)))) &&
             PhotoTranslationQuality.rejectTranslation(
                 original, alternate, source, target
             ) == null
