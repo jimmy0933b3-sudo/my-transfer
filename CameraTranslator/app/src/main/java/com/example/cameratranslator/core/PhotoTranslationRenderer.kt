@@ -243,8 +243,8 @@ internal object PhotoTranslationRenderer {
                 "；處理像素=" + repairedPixels +
                 "；安全保留段數=" + failedRepairs.size)
         var painted = 0
-        for (item in prepared) {
-            if (prepared.indexOf(item) in failedRepairs) {
+        for ((preparedIndex, item) in prepared.withIndex()) {
+            if (preparedIndex in failedRepairs) {
                 skip("區域過大或 OpenCV 修補失敗，保留原文",
                     item.index, item.element)
                 continue
