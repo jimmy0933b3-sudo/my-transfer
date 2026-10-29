@@ -59,6 +59,15 @@ class PhotoQuadGeometryTest {
         assertFalse(PhotoQuadGeometry.eligible(concave))
     }
 
+    @Test fun horizontalPaddleTextIsValidForNativeRepair() {
+        val horizontal = q(40f, 100f, 260f, 100f, 260f, 128f, 40f, 128f)
+        assertTrue(PhotoQuadGeometry.paintable(horizontal))
+        // Legacy title-only skew check intentionally still excludes 0 degrees.
+        assertFalse(PhotoQuadGeometry.eligible(horizontal))
+        val selfCrossing = q(40f, 100f, 260f, 128f, 260f, 100f, 40f, 128f)
+        assertFalse(PhotoQuadGeometry.paintable(selfCrossing))
+    }
+
     @Test fun polygonInsideAndOutsideSamples() {
         val p = q(100f, 130f, 300f, 100f, 305f, 140f, 105f, 170f)
         assertTrue(PhotoQuadGeometry.contains(p, 198f, 133f))

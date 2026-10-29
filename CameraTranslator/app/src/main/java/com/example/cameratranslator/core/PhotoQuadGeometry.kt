@@ -24,18 +24,19 @@ internal object PhotoQuadGeometry {
     fun lineHeight(points: List<OcrPoint>): Float =
         hypot(points[3].x - points[0].x, points[3].y - points[0].y)
 
-    fun eligible(points: List<OcrPoint>?): Boolean {
+    /** Includes nearly horizontal Paddle text. Separate from skew-angle heuristics. */
+    fun paintable(points: List<OcrPoint>?): Boolean {
         if (points?.size != 4 || points.any { !it.x.isFinite() || !it.y.isFinite() })
             return false
-        val angle = abs(angleDegrees(points))
         val w = lineWidth(points)
         val h = lineHeight(points)
-        // Manual photo rotation must not force vertical/half-turned text
-        // back to an axis-aligned erasure rectangle.
-        return angle in 5f..175f && w >= 24f && h >= 12f &&
-            w >= h * 1.5f && polygonArea(points) >= 260f &&
-            isConvex(points)
+        return w >= 24f && h >= 12f && w >= h * 1.5f &&
+            polygonArea(points) >= 260f && isConvex(points)
     }
+
+    /** Legacy heuristic retained for title-overprint detection. */
+    fun eligible(points: List<OcrPoint>?): Boolean =
+        paintable(points) && abs(angleDegrees(points!!)) in 5f..175f
 
     fun polygonArea(points: List<OcrPoint>): Float {
         var sum = 0f

@@ -107,7 +107,9 @@ internal object PhotoTranslationRenderer {
             // horizontal layout erased neighboring diagonal rows even when
             // the actual printed glyphs never intersected.
             val rotatedQuad = element.textQuad?.takeIf {
-                PhotoQuadGeometry.eligible(it)
+                // Paddle supplies both horizontal and tilted text polygons.
+                // Both must use the same native repair path.
+                PhotoQuadGeometry.paintable(it)
             }
             val planned = if (rotatedQuad == null) layout.getOrNull(index) else null
             val rect = if (planned != null)
@@ -115,6 +117,12 @@ internal object PhotoTranslationRenderer {
             else Rect(fullRect)
             val polygon = rotatedQuad ?: PhotoQuadGeometry.rectangle(
                 rect.left, rect.top, rect.right, rect.bottom)
+            // A partitioned fallback rectangle may be narrower than the
+            // original OCR text. Erasing the full source would damage neighbors.
+            if (rotatedQuad == null && rect != fullRect) {
+                skip("無四邊形的文字區域重疊，安全保留原文", index, element)
+                continue
+            }
             if (!isUsableRect(rect, output.width, output.height) ||
                 occupiedPolygons.any { painted ->
                     PhotoQuadGeometry.overlapFraction(polygon, painted) > .23f
@@ -165,18 +173,24 @@ internal object PhotoTranslationRenderer {
                 chosenLines, lineSpacing, fontSize, paint, rotatedQuad))
         }
 
-        // Reconstruct the masked skewed text once from the ORIGINAL image.
-        // Four-corner color interpolation filled whole words with flat brown
-        // bands on the real slanted ErgoFlow poster. Inpainting preserves
-        // neighboring photo texture far better, without rectangular erasure.
-        // IMPORTANT: if the native renderer fails, do not paint on top of
-        // unremoved English. Leave those original pixels completely intact.
-        val skewed = prepared.mapNotNull { it.skewedQuad }
-        var inpaintSucceeded = true
-        if (skewed.isNotEmpty()) {
-            val inpaintStarted = SystemClock.elapsedRealtime()
-            val mask = Bitmap.createBitmap(output.width, output.height,
+        // Plan small, independently repairable ROIs. Any region exceeding
+        // the native memory budget is left unchanged, rather than creating
+        // several full-photo Bitmaps or painting over surviving English.
+        val regions = PhotoInpaintRegionPlanner.plan(
+            prepared.map { item ->
+                val box = item.fullRect
+                PhotoInpaintRegionPlanner.Bounds(
+                    box.left, box.top, box.right, box.bottom)
+            }, original.width, original.height
+        )
+        val failedRepairs = regions.rejectedIndices.toMutableSet()
+        var repairedPixels = 0L
+        val repairStarted = SystemClock.elapsedRealtime()
+        for (region in regions.regions) {
+            val bounds = region.bounds
+            val mask = Bitmap.createBitmap(bounds.width, bounds.height,
                 Bitmap.Config.ARGB_8888)
+            val patched: Bitmap?
             try {
                 val maskCanvas = Canvas(mask)
                 maskCanvas.drawColor(Color.BLACK)
@@ -185,52 +199,62 @@ internal object PhotoTranslationRenderer {
                     color = Color.WHITE
                     style = Paint.Style.FILL
                 }
-                val stroke = Paint(fill).apply {
+                val edge = Paint(fill).apply {
                     style = Paint.Style.STROKE
                     strokeWidth = 2.5f
                     strokeJoin = Paint.Join.ROUND
                 }
-                // 1.25px outward stroke removes antialiased English edges
-                // without extending to another line's enclosing rectangle.
-                skewed.forEach { quad ->
-                    val path = quadPath(quad)
-                    maskCanvas.drawPath(path, fill)
-                    maskCanvas.drawPath(path, stroke)
+                maskCanvas.save()
+                maskCanvas.translate(-bounds.left.toFloat(), -bounds.top.toFloat())
+                region.indices.forEach { index ->
+                    val item = prepared[index]
+                    val box = item.fullRect
+                    val shape = item.skewedQuad?.let(::quadPath) ?: Path().apply {
+                        addRect(box.left.toFloat(), box.top.toFloat(),
+                            box.right.toFloat(), box.bottom.toFloat(),
+                            Path.Direction.CW)
+                    }
+                    maskCanvas.drawPath(shape, fill)
+                    maskCanvas.drawPath(shape, edge)
                 }
-                val restored = OpenCVTextInpaint.inpaint(original, mask)
-                if (restored == null) {
-                    inpaintSucceeded = false
-                    DiagnosticLog.record("PHOTO_RENDER",
-                        "OpenCV 文字背景修補未完成，安全保留斜向原文")
-                } else {
-                    canvas.drawBitmap(restored, 0f, 0f, null)
-                    restored.recycle()
-                }
+                maskCanvas.restore()
+                patched = OpenCVTextInpaint.inpaintRegion(original,
+                    Rect(bounds.left, bounds.top, bounds.right, bounds.bottom), mask)
             } finally {
                 mask.recycle()
             }
-            DiagnosticLog.record("PHOTO_RENDER",
-                "斜向遮罩修補耗時=" +
-                    (SystemClock.elapsedRealtime() - inpaintStarted) +
-                    "ms；四邊形=" + skewed.size +
-                    "；狀態=" + if (inpaintSucceeded) "完成" else "安全保留原文")
+            if (patched == null) {
+                failedRepairs.addAll(region.indices)
+                DiagnosticLog.record("PHOTO_RENDER",
+                    "區域修補失敗；原圖保留；像素=" + bounds.pixels +
+                        "；段數=" + region.indices.size)
+            } else {
+                canvas.drawBitmap(patched, bounds.left.toFloat(),
+                    bounds.top.toFloat(), null)
+                patched.recycle()
+                repairedPixels += bounds.pixels
+            }
         }
-        // Preserve the legacy path for non-Paddle/non-rotated OCR; never
-        // interpolate inside the skewed OCR quadrilateral again.
-        prepared.forEach {
-            if (it.skewedQuad == null)
-                eraseTextRegion(output, original, it.fullRect)
-        }
+        val inpaintSucceeded = failedRepairs.isEmpty()
+        DiagnosticLog.record("PHOTO_RENDER",
+            "局部背景修補耗時=" +
+                (SystemClock.elapsedRealtime() - repairStarted) +
+                "ms；區域數=" + regions.regions.size +
+                "；處理像素=" + repairedPixels +
+                "；安全保留段數=" + failedRepairs.size)
         var painted = 0
-        for (item in prepared) {
-            if (item.skewedQuad != null && !inpaintSucceeded) {
-                skip("OpenCV 文字背景修補失敗", item.index, item.element)
+        for ((preparedIndex, item) in prepared.withIndex()) {
+            if (preparedIndex in failedRepairs) {
+                skip("區域過大或 OpenCV 修補失敗，保留原文",
+                    item.index, item.element)
                 continue
             }
             val rect = item.layoutRect
             val paint = item.paint
             paint.textSize = item.fontSize
-            item.skewedQuad?.let { paint.color = readableInkColor(output, it) }
+            paint.color = readableInkColor(output,
+                item.skewedQuad ?: PhotoQuadGeometry.rectangle(
+                    rect.left, rect.top, rect.right, rect.bottom))
             val overallHeight = item.translatedLines.size * item.lineSpacing
             canvas.save()
             val quad = item.skewedQuad
@@ -268,7 +292,7 @@ internal object PhotoTranslationRenderer {
                     "；字級=" + item.fontSize.toInt())
         }
         DiagnosticLog.record("RENDER_LAYOUT",
-            "可畫段數=" + painted + "；四邊形背景修補=" + inpaintSucceeded +
+            "可畫段數=" + painted + "；局部背景修補成功=" + inpaintSucceeded +
                 "；重疊重新分區=" + partitionsUsed +
             "；因重疊保留原文=" + (skipReasons["文字區塊重疊"] ?: 0))
         return Result(output, painted, skipped, skipReasons, unchanged)
