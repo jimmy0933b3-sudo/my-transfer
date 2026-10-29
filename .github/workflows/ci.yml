@@ -196,6 +196,31 @@ jobs:
       if: always()
       run: rm -f app/ci-release-key.jks app/ci-signing-test.jks
 
+  # Verifies Android Canvas masks and OpenCV JNI on a real Android runtime.
+  image_instrumentation:
+    name: Android image regression tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+
+    - name: Execute photo pixel tests on Android emulator
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: 34
+        target: google_apis
+        arch: x86_64
+        profile: pixel_2
+        disable-animations: true
+        script: cd CameraTranslator && chmod +x gradlew && ./gradlew connectedDebugAndroidTest --no-daemon
+
   # Publish a single stable, public download URL for the LATEST signed APK.
   # GitHub Actions artifacts expire; an updated Release asset remains until replaced.
   publish_latest:
